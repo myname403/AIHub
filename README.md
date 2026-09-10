@@ -320,6 +320,43 @@ set AIHUB_BROWSER_ENABLED=true
 - 浏览器用独立临时 user-data-dir 启动（不碰用户日常配置）；空闲自动回收；
   服务停机与异常路径都按整棵进程树回收，不留孤儿 Chrome。
 
+### 3.10 Nacos 动态配置与 Sentinel 规则持久化
+
+两件「改配置不重启」的事，配置中心都用 Nacos（配置模板与规则样例统一放在 `docs/nacos/`）。
+
+**① 配置热更新**：服务通过 `spring.config.import: optional:nacos:` 拉取配置
+（standalone 模式自动跳过）。Nacos 配置变更 → RefreshEvent →
+`@ConfigurationProperties` bean 自动重绑定，生效方式分三档：
+
+| 配置项 | 生效方式 |
+| --- | --- |
+| `aihub.agent.*`（Agent 三重预算） | 🔥 保存即生效（`AgentProperties`） |
+| `aihub.rag.top-k` / `similarity-threshold` | 🔥 下一次检索即用新值（`RagProperties`） |
+| `aihub.chat-client.cache-seconds` | 🔥 惰性过期，最多等一个旧 TTL（`ChatClientProperties`） |
+| `logging.level.*` | 🔥 LoggingRebinder 即时调整 |
+| `aihub.rag.chunk-*` / `ingest-max-retry`（应用层） | ❄️ 需重启：架构规则禁止 application 层依赖 infra 配置类，保留 `@Value` |
+| `aihub.memory.window-size` / `aihub.browser.*` / 网关 apikey 缓存参数 | ❄️ 需重启（@Value / 装配型） |
+
+实现要点：可热更新的属性类必须是**可变 JavaBean** 风格的 `@ConfigurationProperties`
+（record / 构造器绑定不可重绑定，会静默失去热更能力），使用方在调用时读属性值而非启动时拷贝。
+模板：`docs/nacos/aihub-common.yaml`、`aihub-ai-service.yaml`、`aihub-gateway.yaml`
+（每个键都标注了 🔥/❄️）。
+
+**② Sentinel 规则持久化**：gateway / ai-service / platform 已接入
+`sentinel-datasource-nacos`，限流与熔断规则从 Nacos 拉取，不再依赖 dashboard 手工配置：
+
+| 服务 | Data ID | rule-type |
+| --- | --- | --- |
+| aihub-gateway | `aihub-gateway-flow-rules` | gw-flow（按路由维度限流） |
+| aihub-ai-service | `aihub-ai-service-flow-rules` + `aihub-ai-service-degrade-rules` | flow / degrade |
+| aihub-platform-service | `aihub-platform-service-flow-rules` | flow |
+
+发布方法：Nacos 控制台创建 JSON 配置（Group / namespace 与服务一致），
+内容粘贴 `docs/nacos/` 下同名样例即可。注意规则流向是**单向**的：
+Nacos → Sentinel 内存（启动与变更时拉取）；dashboard 上的手改仍只在本进程内存，
+重启即失——要把调好的规则持久化，最终落点是 Nacos 的 data-id。
+单机模式未启动 Nacos 时，规则拉取失败只打 WARN 日志，不阻断启动。
+
 ## 四、接口速查（经网关，需 Bearer Token）
 
 | 接口 | 说明 |
@@ -396,18 +433,19 @@ curl -X POST http://127.0.0.1:8080/api/ai/chat \
 
 ## 五、遗留事项（可选增强，架构已就位）
 
-1. **Nacos 配置迁移**：基础设施配置（超时/限流/开关）迁入 Nacos 热更新（`spring.config.import: optional:nacos:` 已就绪，standalone 模式下自动跳过）
-2. **Sentinel 规则持久化**：规则写入 Nacos DataSource
-3. **对象存储替换本地磁盘**：入库原始文件当前落在 `{AIHUB_INGEST_DIR}/{tenantId}/{docId}.bin`
+1. **对象存储替换本地磁盘**：入库原始文件当前落在 `{AIHUB_INGEST_DIR}/{tenantId}/{docId}.bin`
    （临时文件 + 原子改名写入），**服务重启后仍可重试**；多实例部署时因各节点本地盘不共享，
    重试可能落到没有该文件的节点——生产建议换 MinIO / OSS
-4. **指标接入可视化**：Micrometer 已埋点并暴露 `/actuator/prometheus`，接 Prometheus + Grafana 即可出图
-5. **MCP Server 的多租户与鉴权**：当前 SSE 通道自身不做鉴权（鉴权在它背后的开放 API 上），
+2. **指标接入可视化**：Micrometer 已埋点并暴露 `/actuator/prometheus`，接 Prometheus + Grafana 即可出图
+3. **MCP Server 的多租户与鉴权**：当前 SSE 通道自身不做鉴权（鉴权在它背后的开放 API 上），
    默认只绑 `127.0.0.1`；若要跨机暴露，需在前面加一层带鉴权的反向代理
-6. **MCP Server 的 streamable-http 传输**：`spring.ai.mcp.server.protocol` 已支持
+4. **MCP Server 的 streamable-http 传输**：`spring.ai.mcp.server.protocol` 已支持
    `streamable` / `stateless`，需要时改配置即可，工具实现不用动
 
-> 已完成（原遗留事项）：**浏览器控制 Agent**（未接 Playwright MCP，改为裸 CDP 直连
+> 已完成（原遗留事项）：**Nacos 配置迁移**（热更新参数收拢为 `@ConfigurationProperties`，
+> 模板见 `docs/nacos/`，见 3.10）、
+> **Sentinel 规则持久化**（规则写入 Nacos DataSource，样例见 `docs/nacos/`，见 3.10）、
+> **浏览器控制 Agent**（未接 Playwright MCP，改为裸 CDP 直连
 > 本机浏览器——零下载、零第三方依赖，能力完全一致，见 3.9）、
 > **MCP Server 三模块**（service / sse / stdio，见 3.8）、
 > 管理端页面（模型 / 应用 / 用量看板）、入库文件落盘、Micrometer 指标、API Key 认证。

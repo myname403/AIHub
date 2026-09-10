@@ -33,6 +33,18 @@ spring:
     sentinel:
       transport:
         dashboard: ${SENTINEL_DASHBOARD:127.0.0.1:8858}
+      # 规则持久化：网关流控规则（gw-flow，按路由维度限流）从 Nacos 拉取，
+      # dashboard 或 Nacos 控制台改规则不再"重启即丢"。规则样例见 docs/nacos/。
+      # 单机模式未启动 Nacos 时，规则拉取失败仅打 WARN 日志，不阻断启动。
+      datasource:
+        gw-flow:
+          nacos:
+            server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+            namespace: ${NACOS_NAMESPACE:public}
+            group-id: ${NACOS_GROUP:DEFAULT_GROUP}
+            data-id: aihub-gateway-flow-rules
+            rule-type: gw-flow
+            data-type: json
       # 网关限流后的兜底响应
       scg:
         fallback:

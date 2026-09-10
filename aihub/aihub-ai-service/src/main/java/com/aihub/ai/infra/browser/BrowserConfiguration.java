@@ -42,7 +42,9 @@ public class BrowserConfiguration {
     public BrowserAgent browserAgent(com.aihub.ai.infra.ai.ChatClientFactory chatClientFactory,
                                      CdpBrowserSessionManager sessionManager,
                                      com.aihub.ai.domain.spi.AgentTaskRepository taskRepository,
-                                     com.aihub.ai.domain.spi.AgentCancelRegistry cancelRegistry) {
-        return new BrowserAgent(chatClientFactory, sessionManager, taskRepository, cancelRegistry);
+                                     com.aihub.ai.domain.spi.AgentCancelRegistry cancelRegistry,
+                                     com.aihub.ai.infra.ai.config.AgentProperties agentProperties) {
+        return new BrowserAgent(chatClientFactory, sessionManager, taskRepository, cancelRegistry,
+                agentProperties);
     }
 }

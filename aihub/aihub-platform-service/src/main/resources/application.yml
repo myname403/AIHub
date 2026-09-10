@@ -27,6 +27,17 @@ spring:
     sentinel:
       transport:
         dashboard: ${SENTINEL_DASHBOARD:127.0.0.1:8858}
+      # 规则持久化：限流规则从 Nacos 拉取，dashboard 或 Nacos 控制台改规则不再"重启即丢"。
+      # 规则样例见 docs/nacos/。单机模式未启动 Nacos 时仅打 WARN，不阻断启动。
+      datasource:
+        flow:
+          nacos:
+            server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+            namespace: ${NACOS_NAMESPACE:public}
+            group-id: ${NACOS_GROUP:DEFAULT_GROUP}
+            data-id: aihub-platform-service-flow-rules
+            rule-type: flow
+            data-type: json
   # 从 Nacos 拉取基础设施配置（改配置无需重启）
   config:
     import:

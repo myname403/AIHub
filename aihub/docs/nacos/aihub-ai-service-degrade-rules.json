@@ -1,0 +1,19 @@
+[
+  {
+    "resource": "POST:/api/ai/chat",
+    "grade": 0,
+    "count": 500,
+    "slowRatioThreshold": 0.5,
+    "minRequestAmount": 20,
+    "statIntervalMs": 10000,
+    "timeWindow": 30
+  },
+  {
+    "resource": "GET:/api/ai/smoke",
+    "grade": 2,
+    "count": 10,
+    "minRequestAmount": 10,
+    "statIntervalMs": 10000,
+    "timeWindow": 15
+  }
+]

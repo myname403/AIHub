@@ -14,11 +14,11 @@ import com.aihub.ai.domain.spi.BrowserDriver;
 import com.aihub.ai.domain.spi.BrowserSessionManager;
 import com.aihub.ai.domain.spi.StreamSink;
 import com.aihub.ai.infra.ai.ChatClientFactory;
+import com.aihub.ai.infra.ai.config.AgentProperties;
 import com.aihub.ai.infra.metrics.AiMetrics;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -73,24 +73,22 @@ public class BrowserAgent extends BaseAgent {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private AiMetrics aiMetrics;
 
-    /** 单任务最大决策步数（默认预算下使用；被上层 Agent 派发时沿用共享预算） */
-    @Value("${aihub.agent.browser.max-steps:8}")
-    private int maxSteps;
-
-    @Value("${aihub.agent.max-tokens:0}")
-    private long maxTokens;
-
-    @Value("${aihub.agent.timeout-ms:180000}")
-    private long timeoutMs;
+    /**
+     * Agent 三重预算参数。用 {@code @ConfigurationProperties} 而非 {@code @Value}：
+     * Nacos 配置变更会触发重绑定（改配置无需重启），{@code @Value} 字段只在启动时绑定一次。
+     */
+    private final AgentProperties agentProperties;
 
     public BrowserAgent(ChatClientFactory chatClientFactory,
                         BrowserSessionManager sessionManager,
                         AgentTaskRepository taskRepository,
-                        AgentCancelRegistry cancelRegistry) {
+                        AgentCancelRegistry cancelRegistry,
+                        AgentProperties agentProperties) {
         super(chatClientFactory);
         this.sessionManager = sessionManager;
         this.taskRepository = taskRepository;
         this.cancelRegistry = cancelRegistry;
+        this.agentProperties = agentProperties;
     }
 
     @Override
@@ -275,7 +273,8 @@ public class BrowserAgent extends BaseAgent {
     }
 
     private AgentBudget defaultBudget() {
-        return new AgentBudget(maxSteps, maxTokens, timeoutMs);
+        return new AgentBudget(agentProperties.getBrowser().getMaxSteps(),
+                agentProperties.getMaxTokens(), agentProperties.getTimeoutMs());
     }
 
     /** 观察文本只留首行给事件流（完整内容随下一步提示词传给模型，事件里塞长文没意义） */

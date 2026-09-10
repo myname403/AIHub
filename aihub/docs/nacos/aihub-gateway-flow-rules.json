@@ -1,0 +1,20 @@
+[
+  {
+    "resource": "aihub-ai",
+    "grade": 1,
+    "count": 100,
+    "intervalSec": 1,
+    "burst": 20,
+    "controlBehavior": 0,
+    "maxQueueingTimeMs": 0
+  },
+  {
+    "resource": "aihub-platform",
+    "grade": 1,
+    "count": 50,
+    "intervalSec": 1,
+    "burst": 10,
+    "controlBehavior": 0,
+    "maxQueueingTimeMs": 0
+  }
+]

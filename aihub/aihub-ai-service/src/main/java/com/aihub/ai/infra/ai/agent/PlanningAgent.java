@@ -12,12 +12,12 @@ import com.aihub.ai.domain.spi.AgentRegistry;
 import com.aihub.ai.domain.spi.AgentTaskRepository;
 import com.aihub.ai.domain.spi.StreamSink;
 import com.aihub.ai.infra.ai.ChatClientFactory;
+import com.aihub.ai.infra.ai.config.AgentProperties;
 import com.aihub.ai.infra.metrics.AiMetrics;
 import com.aihub.common.exception.BizException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
@@ -51,24 +51,22 @@ public class PlanningAgent extends BaseAgent {
     private AiMetrics aiMetrics;
     private final ObjectMapper mapper = new ObjectMapper();
 
-    @Value("${aihub.agent.max-sub-tasks:3}")
-    private int maxSubTasks;
-
-    /** <=0 表示不限制 */
-    @Value("${aihub.agent.max-tokens:0}")
-    private long maxTokens;
-
-    @Value("${aihub.agent.timeout-ms:180000}")
-    private long timeoutMs;
+    /**
+     * Agent 三重预算参数。用 {@code @ConfigurationProperties} 而非 {@code @Value}：
+     * Nacos 配置变更会触发重绑定（改配置无需重启），{@code @Value} 字段只在启动时绑定一次。
+     */
+    private final AgentProperties agentProperties;
 
     public PlanningAgent(ChatClientFactory chatClientFactory,
                          @Lazy AgentRegistry registry,
                          AgentTaskRepository taskRepository,
-                         AgentCancelRegistry cancelRegistry) {
+                         AgentCancelRegistry cancelRegistry,
+                         AgentProperties agentProperties) {
         super(chatClientFactory);
         this.registry = registry;
         this.taskRepository = taskRepository;
         this.cancelRegistry = cancelRegistry;
+        this.agentProperties = agentProperties;
     }
 
     @Override
@@ -170,7 +168,8 @@ public class PlanningAgent extends BaseAgent {
     }
 
     private AgentBudget defaultBudget() {
-        return new AgentBudget(maxSubTasks, maxTokens, timeoutMs);
+        return new AgentBudget(agentProperties.getMaxSubTasks(), agentProperties.getMaxTokens(),
+                agentProperties.getTimeoutMs());
     }
 
     /** LLM 任务拆解：返回 JSON 数组 [{agent, task}]，解析失败则退化为单个 html 子任务 */
@@ -190,7 +189,7 @@ public class PlanningAgent extends BaseAgent {
                 [{"agent":"html","task":"子任务描述"}]
                 不要输出任何其他内容。若目标无需拆解，返回单个 html 子任务。
                 """.formatted(descriptions, task.goal(), task.budget() == null
-                ? maxSubTasks : task.budget().maxSubTasks());
+                ? agentProperties.getMaxSubTasks() : task.budget().maxSubTasks());
 
         String raw = llm(task, system, user);
         String json = extractJsonArray(raw);

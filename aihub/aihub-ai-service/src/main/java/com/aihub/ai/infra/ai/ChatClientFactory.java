@@ -7,6 +7,7 @@ import com.aihub.ai.domain.spi.AppRepository;
 import com.aihub.ai.domain.spi.ModelConfigRepository;
 import com.aihub.ai.domain.spi.ModelGateway;
 import com.aihub.ai.domain.spi.ToolCallLogStore;
+import com.aihub.ai.infra.ai.config.ChatClientProperties;
 import com.aihub.ai.infra.ai.tools.AuditedToolCallback;
 import com.aihub.ai.infra.ai.tools.KnowledgeTools;
 import com.aihub.ai.infra.ai.tools.TimeTools;
@@ -52,12 +53,12 @@ public class ChatClientFactory {
     /** 浏览器工具（可选）：aihub.browser.enabled=false 时容器里没有这个 bean，自动缺席 */
     private final ObjectProvider<com.aihub.ai.infra.ai.tools.BrowserTools> browserToolsProvider;
     private final com.aihub.ai.infra.metrics.AiMetrics aiMetrics;
+    /** 装配缓存 TTL（@ConfigurationProperties，Nacos 配置变更自动重绑定，改 TTL 无需重启） */
+    private final ChatClientProperties chatClientProperties;
 
+    // 敏感凭据保留 @Value：它是部署期注入的密钥而非可热调参数，不应随 Nacos 动态变化
     @Value("${aihub.security.data-key:aihub-dev-data-key}")
     private String dataKey;
-
-    @Value("${aihub.chat-client.cache-seconds:60}")
-    private long cacheSeconds;
 
     private static final String DEFAULT_SYSTEM_PROMPT =
             "你是 AIHub 智能助手，请用简体中文回答，回答需准确、简洁。";
@@ -77,7 +78,8 @@ public class ChatClientFactory {
                              ObjectProvider<ToolCallbackProvider> externalToolProviders,
                              KnowledgeTools knowledgeTools,
                              ObjectProvider<com.aihub.ai.infra.ai.tools.BrowserTools> browserToolsProvider,
-                             com.aihub.ai.infra.metrics.AiMetrics aiMetrics) {
+                             com.aihub.ai.infra.metrics.AiMetrics aiMetrics,
+                             ChatClientProperties chatClientProperties) {
         this.modelGateway = modelGateway;
         this.configRepository = configRepository;
         this.appRepository = appRepository;
@@ -89,16 +91,19 @@ public class ChatClientFactory {
         this.knowledgeTools = knowledgeTools;
         this.browserToolsProvider = browserToolsProvider;
         this.aiMetrics = aiMetrics;
+        this.chatClientProperties = chatClientProperties;
     }
 
     public ChatClient create(Long tenantId, Long appId, String scene) {
         String key = tenantId + ":" + appId + ":" + scene;
         CacheEntry entry = cache.get(key);
         long now = System.currentTimeMillis();
-        if (entry == null || now - entry.createdAt() > cacheSeconds * 1000) {
+        // 每次都读当前 TTL：Nacos 重绑定后，下一次过期判断即用新值（惰性生效）
+        long ttlMillis = chatClientProperties.getCacheSeconds() * 1000;
+        if (entry == null || now - entry.createdAt() > ttlMillis) {
             synchronized (cache) {
                 entry = cache.get(key);
-                if (entry == null || now - entry.createdAt() > cacheSeconds * 1000) {
+                if (entry == null || now - entry.createdAt() > ttlMillis) {
                     entry = build(tenantId, appId, scene);
                     cache.put(key, entry);
                 }

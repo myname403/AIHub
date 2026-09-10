@@ -1,0 +1,20 @@
+# =====================================================================
+# AIHub 网关专属配置模板
+# 发布：Nacos 控制台，Data ID = aihub-gateway.yaml，配置格式 = YAML
+#   Namespace: ${NACOS_NAMESPACE:-public}   Group: ${NACOS_GROUP:-DEFAULT_GROUP}
+# =====================================================================
+# ❄️ = 需重启生效（网关侧参数目前均为 @Value 启动绑定 / 装配型）
+# =====================================================================
+
+aihub:
+  apikey:
+    # 校验超时：鉴权在主链路上，不能让平台服务拖死网关（❄️）
+    verify-timeout-ms: 2000
+    # 校验结果缓存 TTL：「延迟」与「Key 吊销及时性」的平衡点（❄️）
+    cache-ttl-seconds: 60
+    # 本地缓存条目上限（❄️）
+    cache-max-size: 10000
+    # cache-enabled 一般走环境变量 AIHUB_APIKEY_CACHE 控制（❄️）
+
+# 网关流控规则（gw-flow）不在本文件：走独立 data-id 的 JSON 配置，
+# 见 docs/nacos/aihub-gateway-flow-rules.json

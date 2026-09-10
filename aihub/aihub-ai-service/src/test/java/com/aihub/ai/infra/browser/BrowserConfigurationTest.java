@@ -24,6 +24,8 @@ class BrowserConfigurationTest {
             .withBean(ChatClientFactory.class, () -> Mockito.mock(ChatClientFactory.class))
             .withBean(AgentTaskRepository.class, () -> Mockito.mock(AgentTaskRepository.class))
             .withBean(AgentCancelRegistry.class, () -> Mockito.mock(AgentCancelRegistry.class))
+            .withBean(com.aihub.ai.infra.ai.config.AgentProperties.class,
+                    com.aihub.ai.infra.ai.config.AgentProperties::new)
             .withUserConfiguration(BrowserConfiguration.class);
 
     @Test

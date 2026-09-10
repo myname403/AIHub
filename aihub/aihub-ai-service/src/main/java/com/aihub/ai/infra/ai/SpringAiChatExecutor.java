@@ -10,11 +10,11 @@ import com.aihub.ai.domain.spi.KnowledgeRetriever;
 import com.aihub.ai.domain.spi.MessageReferenceStore;
 import com.aihub.ai.domain.spi.StreamSink;
 import com.aihub.ai.infra.metrics.AiMetrics;
+import com.aihub.ai.infra.ai.config.RagProperties;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.memory.ChatMemory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -41,11 +41,8 @@ public class SpringAiChatExecutor implements ChatExecutor {
     private final MessageReferenceStore referenceStore;
     private final AiMetrics aiMetrics;
 
-    @Value("${aihub.rag.top-k:4}")
-    private int ragTopK;
-
-    @Value("${aihub.rag.similarity-threshold:0.6}")
-    private double ragThreshold;
+    /** RAG 检索参数（@ConfigurationProperties，Nacos 配置变更自动重绑定，改配置无需重启） */
+    private final RagProperties ragProperties;
 
     @Override
     public StreamResult call(ChatTurn turn) {
@@ -175,7 +172,8 @@ public class SpringAiChatExecutor implements ChatExecutor {
             int ref = 1;
             for (Long kbId : kbIds) {
                 List<RetrievedChunk> chunks = knowledgeRetriever.retrieve(
-                        turn.tenantId(), kbId, turn.userText(), ragTopK, ragThreshold);
+                        turn.tenantId(), kbId, turn.userText(),
+                        ragProperties.getTopK(), ragProperties.getSimilarityThreshold());
                 for (RetrievedChunk chunk : chunks) {
                     context.append('[').append(ref).append("] ")
                             .append(chunk.content()).append("\n\n");

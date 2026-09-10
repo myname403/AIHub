@@ -95,3 +95,14 @@
   已删）；**URL 前缀白名单要防混淆**（example.com.evil.io 不能匹配 example.com，查前缀后字符）。
 - E2E：`mvnd -pl aihub-ai-service -Dtest=BrowserEndToEndIT test`（无 Chrome 必失败，CI 别开）；
   现场截图 target/browser-e2e.png。
+
+## 九、Nacos 动态配置与 Sentinel 规则持久化
+
+- 热更新属性类在 `infra/ai/config/`（AgentProperties / RagProperties / ChatClientProperties，
+  由 AiRuntimeConfiguration 注册）。**必须是可变 JavaBean**：record / 构造器绑定不可 rebind，
+  会静默失去热更；使用方要调用时读值，不能启动时拷贝到本地字段。
+- application 层参数保留 @Value（架构禁止 application→infra），改后需重启。
+- Sentinel：三模块引 `sentinel-datasource-nacos`（SCA BOM 管版本）；gateway 规则类型
+  gw-flow，服务侧 flow/degrade；规则样例在 `aihub/docs/nacos/`（data-id 同名 JSON，
+  MVC 资源名 `POST:/path`）；NacosDataSourceProperties 支持 namespace（javap 验证过）。
+- 无 Nacos 时 Sentinel 数据源拉取失败仅 WARN，不阻断启动。

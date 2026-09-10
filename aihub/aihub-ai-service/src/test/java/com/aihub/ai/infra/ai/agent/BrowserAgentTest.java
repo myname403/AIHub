@@ -13,6 +13,7 @@ import com.aihub.ai.domain.spi.BrowserDriver;
 import com.aihub.ai.domain.spi.BrowserSessionManager;
 import com.aihub.ai.domain.spi.StreamSink;
 import com.aihub.ai.infra.ai.ChatClientFactory;
+import com.aihub.ai.infra.ai.config.AgentProperties;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.ai.chat.client.ChatClient;
@@ -158,7 +159,7 @@ class BrowserAgentTest {
         ChatClientFactory factory = Mockito.mock(ChatClientFactory.class);
         Mockito.when(factory.create(any(), any(), any()))
                 .thenReturn(ChatClient.builder(model).build());
-        return new BrowserAgent(factory, sessions, taskRepository, cancelRegistry);
+        return new BrowserAgent(factory, sessions, taskRepository, cancelRegistry, new AgentProperties());
     }
 
     @Test

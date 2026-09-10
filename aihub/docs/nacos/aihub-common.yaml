@@ -1,0 +1,22 @@
+# =====================================================================
+# AIHub Nacos 公共配置模板
+# 发布方式：Nacos 控制台 → 配置管理 → 配置列表 → 创建配置
+#   Namespace : ${NACOS_NAMESPACE:-public}
+#   Group     : ${NACOS_GROUP:-DEFAULT_GROUP}
+#   Data ID   : aihub-common.yaml（与各服务 application.yml 的 config.import 一致）
+#   配置格式  : YAML
+# =====================================================================
+# 热更新标记（各服务拉取本文件与专属文件后，配置变更通过 RefreshEvent 生效）：
+#   🔥 = 保存即生效：@ConfigurationProperties 自动重绑定 / logging.level 动态调整
+#   ❄️ = 需重启生效：@Value 字段只在启动时绑定一次 / 装配型配置
+# =====================================================================
+# 本文件刻意保持精简：三个服务共同持有的键位极少，
+# 服务专属参数放 aihub-ai-service.yaml / aihub-gateway.yaml。
+#
+# 适合放公共文件的示例（按需取消注释）：
+# logging:
+#   level:
+#     com.aihub: info          # 🔥 日志级别变更即时生效（LoggingRebinder）
+#
+# 提示：Nacos 上的配置优先级高于服务本地 application.yml，
+#       发布前先在测试环境验证，避免把带占位符的键覆盖成错误值。

@@ -60,6 +60,9 @@ public class KnowledgeAppService {
      */
     private MetricsRecorder metrics = MetricsRecorder.NOOP;
 
+    // 入库参数保留 @Value 而非复用 infra 侧的 RagProperties：架构规则禁止 application 层
+    // 依赖 infra，@Value 字段在启动时绑定一次，这些低频参数改后需重启生效
+    // （哪些键热更新见 docs/nacos/ 与 README 的「Nacos 动态配置」章节）
     @Value("${aihub.rag.chunk-size:500}")
     private int chunkSize;
 

@@ -1,0 +1,50 @@
+# =====================================================================
+# AIHub AI 服务专属配置模板
+# 发布：Nacos 控制台，Data ID = aihub-ai-service.yaml，配置格式 = YAML
+#   Namespace: ${NACOS_NAMESPACE:-public}   Group: ${NACOS_GROUP:-DEFAULT_GROUP}
+# =====================================================================
+# 🔥 = 保存即生效（@ConfigurationProperties 自动重绑定）
+# ❄️ = 需重启生效（@Value 启动时绑定一次 / 装配型配置）
+# =====================================================================
+
+aihub:
+  # Agent 三重预算（🔥 全部热更新：AgentProperties，见 06 号文档 R6）
+  agent:
+    max-sub-tasks: 3           # 🔥 PlanningAgent 单任务最大子任务数
+    max-tokens: 0              # 🔥 单任务 Token 上限，0 表示不限制
+    timeout-ms: 180000         # 🔥 单任务墙钟超时（毫秒）
+    browser:
+      max-steps: 8             # 🔥 浏览器 Agent 单任务最大决策步数
+
+  # RAG 参数（检索两键热更新，入库三键在应用层、需重启）
+  rag:
+    top-k: 4                   # 🔥 每个知识库召回的片段数（RagProperties）
+    similarity-threshold: 0.6  # 🔥 相似度阈值 0~1（RagProperties）
+    chunk-size: 500            # ❄️ 分片大小（应用层 @Value，改后重启）
+    chunk-overlap: 100         # ❄️ 分片重叠
+    ingest-max-retry: 2        # ❄️ 入库失败自动重试上限
+
+  # ChatClient 装配缓存 TTL（🔥：改小后最多等旧 TTL 一个周期，新值参与装配）
+  chat-client:
+    cache-seconds: 60
+
+  # 会话记忆窗口（❄️：DbChatMemory @Value）
+  memory:
+    window-size: 20
+
+  # 浏览器能力（❄️ 装配型：enabled 决定浏览器 bean 是否创建，改后必须重启）
+  browser:
+    enabled: false
+    # max-elements: 120        # 单次页面标注元素上限（控制 token 成本）
+    # idle-timeout: 5m         # 会话空闲回收时间
+    # max-sessions: 3          # 浏览器会话上限
+    # allowed-url-prefixes:    # 地址白名单（生产强烈建议配置）
+    #   - https://example.com
+
+  # 平台服务不可用时的降级开关（❄️ @Value）
+  degrade:
+    quota:
+      enabled: true
+
+# Sentinel 限流/熔断规则不在本文件：规则走独立 data-id（JSON 格式），
+# 见 docs/nacos/aihub-ai-service-flow-rules.json 与 aihub-ai-service-degrade-rules.json
