@@ -27,6 +27,7 @@
 
     <view class="nav-row">
       <text class="kb-link" @click="goKb">知识库管理 ›</text>
+      <text class="kb-link" @click="goAdmin">管理后台 ›</text>
     </view>
 
     <view class="toolbar">
@@ -80,6 +81,9 @@ export default {
   methods: {
     goKb() {
       uni.navigateTo({ url: '/pages/kb/kb' })
+    },
+    goAdmin() {
+      uni.navigateTo({ url: '/pages/admin/index' })
     },
     send() {
       const text = (this.input || '').trim()
@@ -233,6 +237,8 @@ export default {
   height: 24rpx;
 }
 .nav-row {
+  display: flex;
+  gap: 32rpx;
   padding: 8rpx 24rpx 0;
 }
 .kb-link {

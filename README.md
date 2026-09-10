@@ -47,7 +47,8 @@
 | M2 ✅ | RAG 全链路：文档上传→解析→分片（段落+重叠）→向量化→检索→**回答带引用 [n]**；**引用落库可回溯**；**入库异步化（进度 + 重试）**；检索调试台；内置「天机AI助手」示例模板 | 第一章 ETL/VectorStore + 第二章 业务助手 |
 | M3 ✅ | 工具中心：@Tool 内置工具 TimeTools / KnowledgeTools（模型自主调用）；**MCP Client 真集成**（配置即连，工具自动挂载）；**工具调用审计**落 `ai_tool_call_log` | 第三章 MCP |
 | M4 ✅ | Agent 内核：PlanningAgent 任务拆解 → AgentRegistry 按名派发 → Table/Chart/HtmlDoc 生成 Agent → **产物落盘可预览**；agent.step 全程事件流；**三重预算**（子任务数 / Token / 超时）；**服务端可中断**；**任务与步骤落库** | 第四章 MyManus |
-| M5 ✅ | **配额硬限流**（策略+原子累加+超限拦截）、**配额多维度**（request / token / doc / task，一次调用批量原子扣减）、**Token 用量真实统计**、**审计 Advisor（call/stream 双路径）**、**TraceId 全链路**（网关起点 → Feign 透传 → MDC 日志 → 响应体）、**PDF/DOCX 解析**、**WebSocket 通道**（/ws/ai，令牌握手校验）、**知识库管理页** | 综合深化 |
+| M5 ✅ | **配额硬限流**（策略+原子累加+超限拦截）、**配额多维度**（request / token / doc / task，一次调用批量原子扣减）、**Token 用量真实统计**、**审计 Advisor（call/stream 双路径）**、**TraceId 全链路**（网关起点 → Feign 透传 → MDC 日志 → 响应体）、**PDF/DOCX 解析**、**WebSocket 通道**（/ws/ai，令牌握手校验）、**知识库管理页** |
+| M5 ✅ | **开放 API Key 通道**（HMAC-SHA256 只存哈希、网关校验 + Caffeine 缓存、fail-closed）、**Micrometer 指标**（QPS / 延迟 / Token / 工具调用 / 配额拒绝）、**入库文件落本地磁盘**（重启后仍可重试）、**管理端页面**（模型管理 / 应用配置 / 用量看板） | 可观测性、开放平台 |
 
 ## 三、快速启动
 
@@ -124,6 +125,9 @@ npm run build:h5        # 生产构建
 
 登录（demo / admin / admin123）→ 对话页可切换 **对话 / 知识库 / Agent** 三种模式。
 
+对话页右上角另有 **知识库管理** 与 **管理后台** 两个入口：
+管理后台包含「用量看板 / 模型管理 / 应用配置」三页（模型密钥支持在线配置，明文发送后由服务端加密落库）。
+
 ### 3.5 体验 RAG（知识库模式）
 
 ```bash
@@ -199,6 +203,48 @@ spring.ai.mcp.client:
 | `POST /api/ai/agent/cancel` | 取消进行中的 Agent 任务（按 conversationId，服务端真正终止后续子任务） |
 | `WS /ws/ai?token=JWT` | WebSocket 通道（Agent 长任务，双向） |
 
+**管理端（模型 / 应用 / 用量）**
+
+| 接口 | 说明 |
+| --- | --- |
+| `GET /api/ai/model/provider` | 供应商字典（下拉框数据源） |
+| `GET /api/ai/model` | 模型列表（**响应不含密钥**，只有 `hasApiKey` 布尔值） |
+| `POST /api/ai/model` · `PUT /api/ai/model/{id}` · `DELETE /api/ai/model/{id}` | 模型增删改（明文 Key 由服务端 AES-GCM 加密落库；编辑时留空表示保持原值） |
+| `GET /api/ai/model/route` · `PUT /api/ai/model/route` | 场景路由（chat / rag / embed / agent-plan，主备模型） |
+| `GET /api/ai/app` · `POST /api/ai/app` · `PUT /api/ai/app/{id}` · `DELETE /api/ai/app/{id}` | 应用（助手）配置 |
+| `GET /api/ai/app/{id}/knowledge-bases` | 应用已绑定的知识库（多选框回显） |
+| `GET /api/platform/usage/overview?days=7` | 概览：调用次数 / Token / 平均耗时 / 活跃模型数 |
+| `GET /api/platform/usage/trend?days=7` | 按天趋势（**空白日期补零**，可直接画折线） |
+| `GET /api/platform/usage/by-model?days=7` | 按模型聚合（调用量倒序，最多 20 条） |
+| `GET /api/platform/usage/quota` | 配额快照（每维度的限额 / 已用 / 余量 / 使用率） |
+| `POST /api/platform/apikey` · `GET /api/platform/apikey` · `DELETE /api/platform/apikey/{id}` | 签发 / 列出 / 吊销 API Key（明文**只在签发响应里出现一次**） |
+
+### 开放 API Key（第三方对接）
+
+```bash
+# 1) 用用户 JWT 签发一个 Key（明文只返回这一次）
+curl -X POST http://127.0.0.1:8080/api/platform/apikey \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"name":"生产环境"}' | jq -r .data.apiKey
+
+# 2) 之后用 X-API-Key 头调用，无需 JWT
+curl -X POST http://127.0.0.1:8080/api/ai/chat \
+  -H "X-API-Key: ak_xxxxxxxx" -H 'Content-Type: application/json' \
+  -d '{"appId":9001,"message":"你好"}'
+```
+
+- 库中只存 `HMAC-SHA256(key, api-key-secret)`，**明文不落库**，遗忘只能重置
+- 网关校验走 `POST /internal/apikey/verify` + Caffeine 本地缓存（TTL 60s）
+- **平台服务不可用时拒绝而非放行**：鉴权失败必须 fail-closed
+- API Key 不携带用户身份，因此只注入租户、不注入 `X-User-Id`
+
+### 可观测性
+
+- **指标**：`GET /actuator/prometheus` 暴露 `aihub.chat.calls` / `aihub.chat.latency` /
+  `aihub.tokens` / `aihub.tool.calls` / `aihub.agent.tasks` / `aihub.ingest.latency` / `aihub.quota.rejected`
+- 标签只包含低基数枚举值（status / model / stage / tool），**绝不放 tenantId / userId / conversationId**——
+  否则时序库会被租户数量级放大
+
 事件帧：`{"i":序号,"e":"msg.start|token|rag.sources|agent.step|artifact|msg.end|error","ts":..,"data":{..}}`
 
 ### 链路追踪（TraceId）
@@ -220,11 +266,12 @@ spring.ai.mcp.client:
 2. **浏览器控制 Agent**：接入 Playwright MCP（课程第四章的页面标注方案）
 3. **Nacos 配置迁移**：基础设施配置（超时/限流/开关）迁入 Nacos 热更新（`spring.config.import: optional:nacos:` 已就绪，standalone 模式下自动跳过）
 4. **Sentinel 规则持久化**：规则写入 Nacos DataSource
-5. **管理端更多页面**：模型管理 / 应用配置 / 用量看板（后端接口已具备，知识库管理页已完成）
-6. **对象存储替换内存缓存**：入库的原始文件目前暂存在进程内 ConcurrentHashMap，
-   服务重启后无法重试（已在重试接口中给出明确提示），生产建议落 MinIO / OSS
-7. **Micrometer 指标**：QPS / 延迟 / Token 消耗曲线（TraceId 已就位，可直接挂 Observation）
-8. **API Key 认证**：当前只支持 JWT，对外提供能力需补 API Key 通道
+5. **对象存储替换本地磁盘**：入库原始文件当前落在 `{AIHUB_INGEST_DIR}/{tenantId}/{docId}.bin`
+   （临时文件 + 原子改名写入），**服务重启后仍可重试**；多实例部署时因各节点本地盘不共享，
+   重试可能落到没有该文件的节点——生产建议换 MinIO / OSS
+6. **指标接入可视化**：Micrometer 已埋点并暴露 `/actuator/prometheus`，接 Prometheus + Grafana 即可出图
+
+> 已完成（原遗留事项）：管理端页面（模型 / 应用 / 用量看板）、入库文件落盘、Micrometer 指标、API Key 认证。
 
 ## 六、安全红线（务必遵守）
 

@@ -33,6 +33,10 @@ unpackage/
 aihub/aihub-ai-service/artifacts/
 artifacts/
 
+# ---------- 入库原始文件暂存（用户上传内容，绝不能进仓库） ----------
+.aihub/
+aihub/aihub-ai-service/.aihub/
+
 # ---------- 本地环境 ----------
 .env
 .env.local

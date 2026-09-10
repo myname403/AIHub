@@ -12,6 +12,7 @@ import com.aihub.ai.domain.spi.AgentRegistry;
 import com.aihub.ai.domain.spi.AgentTaskRepository;
 import com.aihub.ai.domain.spi.StreamSink;
 import com.aihub.ai.infra.ai.ChatClientFactory;
+import com.aihub.ai.infra.metrics.AiMetrics;
 import com.aihub.common.exception.BizException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -45,6 +46,9 @@ public class PlanningAgent extends BaseAgent {
     private final AgentRegistry registry;
     private final AgentTaskRepository taskRepository;
     private final AgentCancelRegistry cancelRegistry;
+    /** 指标上报（可选）：构造器注入会牵动所有子类，用字段注入保持改动最小 */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private AiMetrics aiMetrics;
     private final ObjectMapper mapper = new ObjectMapper();
 
     @Value("${aihub.agent.max-sub-tasks:3}")
@@ -100,6 +104,9 @@ public class PlanningAgent extends BaseAgent {
             taskRepository.finish(taskId, result.status(), result.answer(),
                     System.currentTimeMillis() - start, budget.usedTokens());
             cancelRegistry.clear(root.conversationId());
+            if (aiMetrics != null) {
+                aiMetrics.recordAgentTask(result.status());
+            }
         }
         return result;
     }

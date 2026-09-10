@@ -50,6 +50,16 @@ aihub:
   security:
     # 生产环境请放入 Nacos 并开启鉴权，不要使用默认值
     jwt-secret: ${AIHUB_JWT_SECRET:aihub-default-dev-secret-please-change-me-32bytes}
+  # 开放 API Key 校验（网关回调平台服务）
+  apikey:
+    verify-url: ${AIHUB_PLATFORM_URL:http://aihub-platform-service}
+    # 校验超时：鉴权在主链路上，不能让平台服务拖死网关
+    verify-timeout-ms: 2000
+    # 校验结果缓存：省掉绝大部分远程调用；设 false 则每次实时校验
+    cache-enabled: ${AIHUB_APIKEY_CACHE:true}
+    # 缓存 TTL 是「延迟」与「吊销及时性」的平衡点
+    cache-ttl-seconds: 60
+    cache-max-size: 10000
 
 management:
   endpoints:

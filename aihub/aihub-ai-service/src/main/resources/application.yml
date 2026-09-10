@@ -103,6 +103,8 @@ aihub:
     chunk-overlap: 100
     # 入库失败自动重试次数上限（指数退避，耗尽后任务落 failed，可手动重试）
     ingest-max-retry: 2
+    # 入库原始文件暂存目录（失败任务靠它重试；生产多实例部署应换 MinIO / OSS）
+    ingest-file-dir: ${AIHUB_INGEST_DIR:.aihub/ingest}
   # 会话记忆窗口
   memory:
     window-size: 20
@@ -124,10 +126,20 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        # prometheus 用于指标抓取；health/info 常规探活
+        include: health,info,metrics,prometheus
   endpoint:
     health:
       show-details: always
+  metrics:
+    tags:
+      # 全局标签：多实例部署时用于区分来源，便于聚合
+      application: ${spring.application.name}
+    distribution:
+      # 打开直方图桶，Prometheus 端才能算 P95/P99 分位数
+      percentiles-histogram:
+        aihub.chat.latency: true
+        aihub.ingest.latency: true
 
 logging:
   level:

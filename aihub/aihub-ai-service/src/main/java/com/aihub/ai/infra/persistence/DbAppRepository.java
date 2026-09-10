@@ -29,18 +29,63 @@ public class DbAppRepository implements AppRepository {
                 .eq(AiAppDO::getTenantId, tenantId)
                 .eq(AiAppDO::getId, appId)
                 .last("limit 1"));
-        if (ddo == null) {
-            return Optional.empty();
-        }
-        App app = new App();
-        app.setId(ddo.getId());
-        app.setTenantId(ddo.getTenantId());
-        app.setName(ddo.getName());
-        app.setSystemPrompt(ddo.getSystemPrompt());
-        app.setAgentStrategy(ddo.getAgentStrategy());
-        app.setMemoryPolicy(ddo.getMemoryPolicy());
-        app.setStatus(ddo.getStatus());
-        return Optional.of(app);
+        return ddo == null ? Optional.empty() : Optional.of(toDomain(ddo));
+    }
+
+    @Override
+    public List<App> list(Long tenantId) {
+        return appMapper.selectList(Wrappers.<AiAppDO>lambdaQuery()
+                        .eq(AiAppDO::getTenantId, tenantId)
+                        .orderByDesc(AiAppDO::getId))
+                .stream().map(this::toDomain).toList();
+    }
+
+    @Override
+    public Long create(App app) {
+        AiAppDO ddo = new AiAppDO();
+        // 显式忽略调用方传入的 id：新建时由 IdWorker 生成，防止覆盖他人的主键
+        ddo.setTenantId(app.getTenantId());
+        ddo.setName(app.getName());
+        ddo.setSystemPrompt(app.getSystemPrompt());
+        ddo.setModelRouteId(app.getModelRouteId());
+        ddo.setAgentStrategy(app.getAgentStrategy());
+        ddo.setMemoryPolicy(app.getMemoryPolicy());
+        ddo.setTemperature(app.getTemperature());
+        ddo.setStatus(app.getStatus());
+        appMapper.insert(ddo);
+        return ddo.getId();
+    }
+
+    /**
+     * 更新：WHERE 条件同时带 tenantId 与 id。
+     *
+     * <p>这不是「先查再改」的乐观检查，而是把租户作为更新条件本身——
+     * 即使调用方拿到了别人的 appId，影响行数也会是 0 而不是改掉别人的数据。
+     */
+    @Override
+    public boolean update(Long tenantId, App app) {
+        AiAppDO patch = new AiAppDO();
+        patch.setName(app.getName());
+        patch.setSystemPrompt(app.getSystemPrompt());
+        patch.setModelRouteId(app.getModelRouteId());
+        patch.setAgentStrategy(app.getAgentStrategy());
+        patch.setMemoryPolicy(app.getMemoryPolicy());
+        patch.setTemperature(app.getTemperature());
+        patch.setStatus(app.getStatus());
+        return appMapper.update(patch, Wrappers.<AiAppDO>lambdaUpdate()
+                .eq(AiAppDO::getTenantId, tenantId)
+                .eq(AiAppDO::getId, app.getId())) > 0;
+    }
+
+    @Override
+    public boolean delete(Long tenantId, Long appId) {
+        // 先删绑定关系，避免遗留孤儿行让 RAG 仍能召回已删应用的知识库
+        appKbMapper.delete(Wrappers.<AiAppKbDO>lambdaQuery()
+                .eq(AiAppKbDO::getTenantId, tenantId)
+                .eq(AiAppKbDO::getAppId, appId));
+        return appMapper.delete(Wrappers.<AiAppDO>lambdaQuery()
+                .eq(AiAppDO::getTenantId, tenantId)
+                .eq(AiAppDO::getId, appId)) > 0;
     }
 
     @Override
@@ -57,7 +102,7 @@ public class DbAppRepository implements AppRepository {
                 .eq(AiAppKbDO::getTenantId, tenantId)
                 .eq(AiAppKbDO::getAppId, appId)
                 .eq(AiAppKbDO::getKbId, kbId));
-        if (exists > 0) {
+        if (exists != null && exists > 0) {
             return;
         }
         AiAppKbDO ddo = new AiAppKbDO();
@@ -65,5 +110,27 @@ public class DbAppRepository implements AppRepository {
         ddo.setAppId(appId);
         ddo.setKbId(kbId);
         appKbMapper.insert(ddo);
+    }
+
+    @Override
+    public boolean unbindKnowledgeBase(Long tenantId, Long appId, Long kbId) {
+        return appKbMapper.delete(Wrappers.<AiAppKbDO>lambdaQuery()
+                .eq(AiAppKbDO::getTenantId, tenantId)
+                .eq(AiAppKbDO::getAppId, appId)
+                .eq(AiAppKbDO::getKbId, kbId)) > 0;
+    }
+
+    private App toDomain(AiAppDO ddo) {
+        App app = new App();
+        app.setId(ddo.getId());
+        app.setTenantId(ddo.getTenantId());
+        app.setName(ddo.getName());
+        app.setSystemPrompt(ddo.getSystemPrompt());
+        app.setModelRouteId(ddo.getModelRouteId());
+        app.setAgentStrategy(ddo.getAgentStrategy());
+        app.setMemoryPolicy(ddo.getMemoryPolicy());
+        app.setTemperature(ddo.getTemperature());
+        app.setStatus(ddo.getStatus());
+        return app;
     }
 }

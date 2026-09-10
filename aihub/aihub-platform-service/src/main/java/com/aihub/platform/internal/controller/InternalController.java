@@ -2,6 +2,7 @@ package com.aihub.platform.internal.controller;
 
 import com.aihub.api.client.PlatformClient;
 import com.aihub.common.result.R;
+import com.aihub.platform.apikey.service.ApiKeyService;
 import com.aihub.platform.quota.service.QuotaService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -26,12 +27,32 @@ import java.util.Optional;
 public class InternalController {
 
     private final QuotaService quotaService;
+    private final ApiKeyService apiKeyService;
 
     @GetMapping("/tenants/check")
     public R<PlatformClient.TenantBrief> checkTenant(@RequestParam("tenantId") Long tenantId) {
         Optional<PlatformClient.TenantBrief> brief = quotaService.checkTenant(tenantId);
         return brief.map(R::ok)
                 .orElseGet(() -> R.fail(10003, "租户不存在或已停用"));
+    }
+
+    /**
+     * 校验开放 API Key（网关调用）。
+     *
+     * <p>只回传 Key 归属的租户与授权范围，<b>不回传哈希</b>。
+     * 校验失败返回 10002，网关据此返回 401。
+     */
+    @PostMapping("/apikey/verify")
+    public R<PlatformClient.ApiKeyVerifyResult> verifyApiKey(
+            @RequestBody PlatformClient.ApiKeyVerifyRequest request) {
+        return apiKeyService.verify(request == null ? null : request.apiKey())
+                .map(p -> {
+                    // 校验通过后异步更新使用记录，不阻塞鉴权路径
+                    apiKeyService.touch(p.keyId());
+                    return R.ok(new PlatformClient.ApiKeyVerifyResult(
+                            p.keyId(), p.tenantId(), p.appId(), p.name()));
+                })
+                .orElseGet(() -> R.fail(10002, "API Key 无效、已停用或已过期"));
     }
 
     @PostMapping("/quota/check")

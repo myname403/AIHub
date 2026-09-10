@@ -3,6 +3,7 @@ package com.aihub.ai.application;
 import com.aihub.ai.domain.model.DocumentInfo;
 import com.aihub.ai.domain.spi.AppRepository;
 import com.aihub.ai.domain.spi.DocumentRepository;
+import com.aihub.ai.domain.spi.IngestFileStore;
 import com.aihub.ai.domain.spi.IngestTaskRepository;
 import com.aihub.ai.domain.spi.KnowledgeBaseRepository;
 import com.aihub.ai.domain.spi.KnowledgeIndexer;
@@ -51,6 +52,7 @@ class KnowledgeAppServiceTest {
     private KnowledgeRetriever knowledgeRetriever;
     private AppRepository appRepository;
     private IngestTaskRepository ingestTaskRepository;
+    private IngestFileStore ingestFileStore;
     private com.aihub.api.client.PlatformClient platformClient;
     private KnowledgeAppService service;
 
@@ -65,10 +67,11 @@ class KnowledgeAppServiceTest {
         knowledgeRetriever = mock(KnowledgeRetriever.class);
         appRepository = mock(AppRepository.class);
         ingestTaskRepository = mock(IngestTaskRepository.class);
+        ingestFileStore = mock(IngestFileStore.class);
         platformClient = mock(com.aihub.api.client.PlatformClient.class);
 
         service = new KnowledgeAppService(kbRepository, documentRepository, knowledgeIndexer,
-                knowledgeRetriever, appRepository, ingestTaskRepository, platformClient);
+                knowledgeRetriever, appRepository, ingestTaskRepository, ingestFileStore, platformClient);
         ReflectionTestUtils.setField(service, "chunkSize", 500);
         ReflectionTestUtils.setField(service, "chunkOverlap", 100);
         ReflectionTestUtils.setField(service, "ingestMaxRetry", 2);
@@ -193,15 +196,76 @@ class KnowledgeAppServiceTest {
     }
 
     @Test
-    void retryShouldFailWhenOriginalBytesReleased() {
+    void retryShouldFailWhenOriginalFileMissing() {
         when(ingestTaskRepository.find(1L, 999L)).thenReturn(Optional.of(
                 new com.aihub.ai.domain.model.IngestTask(
                         999L, 1L, 10L, 100L, com.aihub.ai.domain.model.IngestTask.STATUS_FAILED,
                         "vector", 70, 0, "向量库不可用")));
+        // 暂存介质里没有该文档（例如文件被人工删除）
+        when(ingestFileStore.load(1L, 100L)).thenReturn(Optional.empty());
 
-        // 未提交过该文档（内存缓存为空），应提示重新上传而不是静默失败
         assertFalse(service.retryIngest(1L, 999L));
         verify(ingestTaskRepository).markFailed(eq(1L), eq(999L), anyString());
+    }
+
+    /* ---------------- 文件暂存生命周期 ---------------- */
+
+    @Test
+    void shouldPersistOriginalFileOnSubmit() {
+        when(knowledgeIndexer.index(anyLong(), anyLong(), anyLong(), any())).thenReturn(1);
+
+        service.submitIngest(1L, 10L, "手册.md", longText());
+
+        // 提交时必须落暂存：这是「重启后仍可重试」的前提
+        verify(ingestFileStore, timeout(5000))
+                .save(eq(1L), eq(100L), org.mockito.ArgumentMatchers.any(byte[].class));
+    }
+
+    /** 成功入库后应清理暂存文件，避免磁盘无限增长 */
+    @Test
+    void shouldDeleteStagedFileAfterSuccess() throws Exception {
+        when(knowledgeIndexer.index(anyLong(), anyLong(), anyLong(), any())).thenReturn(3);
+
+        service.submitIngest(1L, 10L, "手册.md", longText());
+
+        verify(ingestFileStore, timeout(5000)).delete(1L, 100L);
+    }
+
+    /**
+     * 关键约束：失败时<b>不能</b>删暂存文件，否则重试就没有原料了。
+     */
+    @Test
+    void shouldKeepStagedFileAfterFailure() throws Exception {
+        when(knowledgeIndexer.index(anyLong(), anyLong(), anyLong(), any()))
+                .thenThrow(new IllegalStateException("向量库不可用"));
+
+        service.submitIngest(1L, 10L, "手册.md", longText());
+
+        verify(ingestTaskRepository, timeout(15000)).markFailed(eq(1L), eq(999L), anyString());
+        verify(ingestFileStore, never()).delete(anyLong(), anyLong());
+    }
+
+    /**
+     * 【回归】服务重启后仍能重试：只要暂存介质里有文件，
+     * 就应按文档记录里的文件名重新执行，而不是报「原始文件已释放」。
+     */
+    @Test
+    void retryShouldWorkAfterServiceRestart() throws Exception {
+        when(ingestTaskRepository.find(1L, 999L)).thenReturn(Optional.of(
+                new com.aihub.ai.domain.model.IngestTask(
+                        999L, 1L, 10L, 100L, com.aihub.ai.domain.model.IngestTask.STATUS_FAILED,
+                        "vector", 70, 0, "向量库不可用")));
+        when(ingestFileStore.load(1L, 100L)).thenReturn(Optional.of(longText()));
+        // 文件名来自持久化的文档记录，而非内存 Map
+        when(documentRepository.find(1L, 100L)).thenReturn(Optional.of(
+                new DocumentInfo(100L, 10L, "手册.md", "md", DocumentInfo.STATUS_FAILED, "向量库不可用")));
+        when(knowledgeIndexer.index(anyLong(), anyLong(), anyLong(), any())).thenReturn(4);
+
+        boolean accepted = service.retryIngest(1L, 999L);
+
+        assertTrue(accepted, "暂存文件仍在时应受理重试");
+        verify(ingestTaskRepository).prepareRetry(1L, 999L);
+        verify(ingestTaskRepository, timeout(5000)).markDone(1L, 999L);
     }
 
     @Test

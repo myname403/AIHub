@@ -2,6 +2,7 @@ package com.aihub.gateway.filter;
 
 import com.aihub.common.tenant.TenantContext;
 import com.aihub.common.trace.TraceContext;
+import com.aihub.gateway.apikey.ApiKeyCache;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import org.springframework.beans.factory.annotation.Value;
@@ -20,19 +21,29 @@ import java.nio.charset.StandardCharsets;
 /**
  * 网关鉴权过滤器。
  *
- * <p>职责：解析 Authorization 中的 JWT，取出 tenantId / userId，
- * 并写入下游请求头 {@code X-Tenant-Id} / {@code X-User-Id}。
+ * <p>支持两种凭证（M5 起）：
+ * <ol>
+ *   <li><b>JWT</b>：{@code Authorization: Bearer <jwt>}，面向终端用户（H5 / 小程序）；</li>
+ *   <li><b>API Key</b>：{@code X-API-Key: ak_xxx}，面向第三方系统对接。</li>
+ * </ol>
  *
- * <p>安全约束（★）：租户 ID 只从令牌解析，<b>绝不接受前端传参</b>；
- * 同时强制剥离客户端伪造的同名请求头，防止越权。
+ * <p>安全约束（★）：租户 ID 只从凭证解析，<b>绝不接受前端传参</b>；
+ * 同时强制剥离客户端伪造的 {@code X-Tenant-Id} / {@code X-User-Id}，
+ * 防止越权。API Key 不携带用户身份，因此只注入租户、不注入 userId。
  */
 @Component
 public class AuthGlobalFilter implements GlobalFilter, Ordered {
 
-    private final byte[] secretKey;
+    /** API Key 请求头 */
+    private static final String HEADER_API_KEY = "X-API-Key";
 
-    public AuthGlobalFilter(@Value("${aihub.security.jwt-secret}") String jwtSecret) {
+    private final byte[] secretKey;
+    private final ApiKeyCache apiKeyCache;
+
+    public AuthGlobalFilter(@Value("${aihub.security.jwt-secret}") String jwtSecret,
+                            ApiKeyCache apiKeyCache) {
         this.secretKey = jwtSecret.getBytes(StandardCharsets.UTF_8);
+        this.apiKeyCache = apiKeyCache;
     }
 
     @Override
@@ -44,11 +55,42 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
             return chain.filter(exchange);
         }
 
+        // 优先识别 API Key：第三方对接常用固定头，避免与用户 JWT 混用
+        String apiKey = request.getHeaders().getFirst(HEADER_API_KEY);
+        if (apiKey != null && !apiKey.isBlank()) {
+            return authenticateByApiKey(exchange, chain, apiKey);
+        }
+
         String token = resolveToken(request);
         if (token == null) {
             return unauthorized(exchange, "缺少认证令牌");
         }
+        return authenticateByJwt(exchange, chain, token);
+    }
 
+    /** API Key 通道：Key 反查出租户，不注入 userId（无用户身份） */
+    private Mono<Void> authenticateByApiKey(ServerWebExchange exchange,
+                                            GatewayFilterChain chain, String apiKey) {
+        return apiKeyCache.verify(apiKey)
+                .flatMap(principal -> {
+                    ServerHttpRequest mutated = exchange.getRequest().mutate()
+                            .headers(headers -> {
+                                // 强制覆盖，防止伪造租户头
+                                headers.remove(TenantContext.HEADER_TENANT);
+                                headers.remove(TenantContext.HEADER_USER);
+                                headers.set(TenantContext.HEADER_TENANT,
+                                        String.valueOf(principal.tenantId()));
+                                // API Key 代表系统调用而非具体用户，显式清空用户头
+                            })
+                            .build();
+                    return chain.filter(exchange.mutate().request(mutated).build());
+                })
+                .switchIfEmpty(Mono.defer(() -> unauthorized(exchange, "API Key 无效、已停用或已过期")));
+    }
+
+    /** JWT 通道：解析令牌取租户与用户 */
+    private Mono<Void> authenticateByJwt(ServerWebExchange exchange,
+                                         GatewayFilterChain chain, String token) {
         final String tenantId;
         final String userId;
         try {
@@ -69,7 +111,7 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
         }
 
         // 重建请求头：强制覆盖，防止客户端伪造租户头
-        ServerHttpRequest mutated = request.mutate()
+        ServerHttpRequest mutated = exchange.getRequest().mutate()
                 .headers(headers -> {
                     headers.remove(TenantContext.HEADER_TENANT);
                     headers.remove(TenantContext.HEADER_USER);

@@ -9,6 +9,7 @@ import com.aihub.ai.domain.spi.ChatExecutor;
 import com.aihub.ai.domain.spi.KnowledgeRetriever;
 import com.aihub.ai.domain.spi.MessageReferenceStore;
 import com.aihub.ai.domain.spi.StreamSink;
+import com.aihub.ai.infra.metrics.AiMetrics;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
@@ -38,6 +39,7 @@ public class SpringAiChatExecutor implements ChatExecutor {
     private final AppRepository appRepository;
     private final KnowledgeRetriever knowledgeRetriever;
     private final MessageReferenceStore referenceStore;
+    private final AiMetrics aiMetrics;
 
     @Value("${aihub.rag.top-k:4}")
     private int ragTopK;
@@ -65,9 +67,18 @@ public class SpringAiChatExecutor implements ChatExecutor {
             String content = response == null || response.getResult() == null
                     ? "" : response.getResult().getOutput().getText();
             referenceStore.save(turn.tenantId(), turn.conversationId(), augmented.references());
-            return new StreamResult(content == null ? "" : content,
+            String modelCode = chatClientFactory.resolvedModelCode(
+                    turn.tenantId(), turn.appId(), turn.scene());
+            int tokenIn = tokenOf(response, true);
+            int tokenOut = tokenOf(response, false);
+            aiMetrics.recordChat(turn.scene(), true, cost, modelCode, tokenIn, tokenOut);
+            return new StreamResult(content == null ? "" : content, modelCode, cost, tokenIn, tokenOut);
+        } catch (RuntimeException e) {
+            // 失败也要计数与计时，否则成功率与耗时分位数都是失真的
+            aiMetrics.recordChat(turn.scene(), false, System.currentTimeMillis() - start,
                     chatClientFactory.resolvedModelCode(turn.tenantId(), turn.appId(), turn.scene()),
-                    cost, tokenOf(response, true), tokenOf(response, false));
+                    0, 0);
+            throw e;
         } finally {
             AiCallContext.clear();
         }
@@ -128,11 +139,16 @@ public class SpringAiChatExecutor implements ChatExecutor {
                     turn.tenantId(), turn.appId(), turn.scene());
             // 记忆 Advisor 已在流结束时把助手消息落库，此刻才能把引用挂到该消息上
             referenceStore.save(turn.tenantId(), turn.conversationId(), augmented.references());
+            int tokenIn = tokenOf(last[0], true);
+            int tokenOut = tokenOf(last[0], false);
+            aiMetrics.recordChat(turn.scene(), true, cost, modelCode, tokenIn, tokenOut);
             sink.emit(StreamEvent.end(index[0]++, cost, modelCode));
-            return new StreamResult(content.toString(), modelCode, cost,
-                    tokenOf(last[0], true), tokenOf(last[0], false));
+            return new StreamResult(content.toString(), modelCode, cost, tokenIn, tokenOut);
         } catch (Exception e) {
             log.error("流式对话失败 tenant={} conv={}", turn.tenantId(), turn.conversationId(), e);
+            aiMetrics.recordChat(turn.scene(), false, System.currentTimeMillis() - start,
+                    chatClientFactory.resolvedModelCode(turn.tenantId(), turn.appId(), turn.scene()),
+                    0, 0);
             sink.emit(StreamEvent.error(index[0]++,
                     String.valueOf(com.aihub.common.result.ResultCode.MODEL_UNAVAILABLE.getCode()),
                     "模型调用失败，请稍后重试"));

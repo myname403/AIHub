@@ -30,13 +30,17 @@ export function getToken() {
 }
 
 /**
- * 通用 POST（带 JWT）。返回响应体中的 data 部分。
+ * 通用请求（带 JWT）。返回响应体中的 data 部分。
+ *
+ * 判断成功的条件有两个，缺一不可：
+ *   1. HTTP 200；2. 业务码 code === 0。
+ * 只判 HTTP 状态会把「网关放行但业务报错」当成成功，前端拿到的数据是 undefined。
  */
-export function post(path, data) {
+export function request(method, path, data) {
   return new Promise((resolve, reject) => {
     uni.request({
       url: config.baseUrl + path,
-      method: 'POST',
+      method,
       header: {
         'Content-Type': 'application/json',
         Authorization: 'Bearer ' + getToken()
@@ -52,6 +56,25 @@ export function post(path, data) {
       fail: (err) => reject(new Error('网络错误：' + (err.errMsg || '')))
     })
   })
+}
+
+/**
+ * 通用 POST（带 JWT）。返回响应体中的 data 部分。
+ */
+export function post(path, data) {
+  return request('POST', path, data)
+}
+
+export function get(path) {
+  return request('GET', path)
+}
+
+export function put(path, data) {
+  return request('PUT', path, data)
+}
+
+export function del(path, data) {
+  return request('DELETE', path, data)
 }
 
 export function logout() {

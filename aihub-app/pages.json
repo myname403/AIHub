@@ -17,6 +17,30 @@
       "style": {
         "navigationBarTitleText": "知识库管理"
       }
+    },
+    {
+      "path": "pages/admin/index",
+      "style": {
+        "navigationBarTitleText": "管理后台"
+      }
+    },
+    {
+      "path": "pages/admin/usage",
+      "style": {
+        "navigationBarTitleText": "用量看板"
+      }
+    },
+    {
+      "path": "pages/admin/model",
+      "style": {
+        "navigationBarTitleText": "模型管理"
+      }
+    },
+    {
+      "path": "pages/admin/app",
+      "style": {
+        "navigationBarTitleText": "应用配置"
+      }
     }
   ],
   "globalStyle": {

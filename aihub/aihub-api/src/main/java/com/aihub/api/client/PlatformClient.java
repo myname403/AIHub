@@ -39,9 +39,25 @@ public interface PlatformClient {
     @PostMapping("/usage/report")
     R<Void> reportUsage(@RequestBody UsageReport report);
 
+    /**
+     * 校验开放 API Key（网关调用，M5）。
+     *
+     * <p>Key 明文经 HTTPS 传到内网，平台侧按 HMAC 哈希比对；
+     * 返回结果里只有租户与授权范围，不含任何密钥material。
+     */
+    @PostMapping("/apikey/verify")
+    R<ApiKeyVerifyResult> verifyApiKey(@RequestBody ApiKeyVerifyRequest request);
+
     /* ---------- DTO ---------- */
 
     record TenantBrief(Long tenantId, String name, String status) {
+    }
+
+    record ApiKeyVerifyRequest(String apiKey) {
+    }
+
+    /** Key 校验结果：租户由 Key 反查得到，调用方无法通过传参指定 */
+    record ApiKeyVerifyResult(Long keyId, Long tenantId, Long appId, String name) {
     }
 
     record QuotaRequest(String requestId, Long tenantId, String appId,

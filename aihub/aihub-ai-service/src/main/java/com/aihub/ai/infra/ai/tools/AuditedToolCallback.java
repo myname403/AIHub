@@ -2,6 +2,7 @@ package com.aihub.ai.infra.ai.tools;
 
 import com.aihub.ai.domain.spi.ToolCallLogStore;
 import com.aihub.ai.infra.ai.AiCallContext;
+import com.aihub.ai.infra.metrics.AiMetrics;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.tool.ToolCallback;
@@ -9,12 +10,13 @@ import org.springframework.ai.tool.definition.ToolDefinition;
 import org.springframework.ai.tool.metadata.ToolMetadata;
 
 /**
- * 带审计的工���回调包装器（M3）。
+ * 带审计的工具回调包装器（M3）。
  *
- * <p>在不侵入工具实现的前提下记录每一次调用：工具名、来源（local / mcp / http）、
- * 入参、出参、耗时与成功与否，写入 {@code ai_tool_call_log}。
+ * <p>在不侵入工具实现的前提下记录每一次调用：工具名、来源（local / mcp）、
+ * 入参、出参、耗时与成功与否，写入 {@code ai_tool_call_log}；
+ * 同时上报 Micrometer 指标（按工具名与成败计数）。
  *
- * <p>审计失败（如日志表不可用）只记录 warn，绝不中断模型调用。
+ * <p>审计失败（如日志表不可用）只记 warn，绝不中断模型调用。
  */
 @Slf4j
 public class AuditedToolCallback implements ToolCallback {
@@ -22,11 +24,19 @@ public class AuditedToolCallback implements ToolCallback {
     private final ToolCallback delegate;
     private final ToolCallLogStore logStore;
     private final String source;
+    /** 可为 null：指标是增强项，缺失时跳过而不影响工具调用 */
+    private final AiMetrics metrics;
 
     public AuditedToolCallback(ToolCallback delegate, ToolCallLogStore logStore, String source) {
+        this(delegate, logStore, source, null);
+    }
+
+    public AuditedToolCallback(ToolCallback delegate, ToolCallLogStore logStore, String source,
+                               AiMetrics metrics) {
         this.delegate = delegate;
         this.logStore = logStore;
         this.source = source;
+        this.metrics = metrics;
     }
 
     @Override
@@ -58,7 +68,11 @@ public class AuditedToolCallback implements ToolCallback {
             error = e.getMessage();
             throw e;
         } finally {
-            record(toolInput, output, error, System.currentTimeMillis() - start);
+            long cost = System.currentTimeMillis() - start;
+            record(toolInput, output, error, cost);
+            if (metrics != null) {
+                metrics.recordToolCall(getToolDefinition().name(), source, error == null, cost);
+            }
         }
     }
 

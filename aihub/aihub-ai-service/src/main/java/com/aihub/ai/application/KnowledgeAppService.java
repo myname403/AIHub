@@ -6,10 +6,12 @@ import com.aihub.ai.domain.model.IngestTask;
 import com.aihub.ai.domain.model.RetrievedChunk;
 import com.aihub.ai.domain.spi.AppRepository;
 import com.aihub.ai.domain.spi.DocumentRepository;
+import com.aihub.ai.domain.spi.IngestFileStore;
 import com.aihub.ai.domain.spi.IngestTaskRepository;
 import com.aihub.ai.domain.spi.KnowledgeBaseRepository;
 import com.aihub.ai.domain.spi.KnowledgeIndexer;
 import com.aihub.ai.domain.spi.KnowledgeRetriever;
+import com.aihub.ai.domain.spi.MetricsRecorder;
 import com.aihub.ai.domain.support.TextChunker;
 import com.aihub.api.client.PlatformClient;
 import com.aihub.api.client.QuotaDimensions;
@@ -50,7 +52,13 @@ public class KnowledgeAppService {
     private final KnowledgeRetriever knowledgeRetriever;
     private final AppRepository appRepository;
     private final IngestTaskRepository ingestTaskRepository;
+    private final IngestFileStore ingestFileStore;
     private final PlatformClient platformClient;
+    /**
+     * 指标埋点端口（domain SPI，infra 提供实现）。
+     * 用 setter 注入而非构造器：未接入指标时保持 NOOP，单测无需构造它。
+     */
+    private MetricsRecorder metrics = MetricsRecorder.NOOP;
 
     @Value("${aihub.rag.chunk-size:500}")
     private int chunkSize;
@@ -135,9 +143,8 @@ public class KnowledgeAppService {
 
         Long docId = documentRepository.createDocument(tenantId, kbId, filename, fileType, bytes.length);
         Long taskId = ingestTaskRepository.create(tenantId, kbId, docId);
-        // 原始字节留在内存里供工作线程与重试使用（单机版；改为对象存储后此处换成 fileKey）
-        ingestBytes.put(cacheKey(tenantId, docId), bytes);
-        ingestFileNames.put(docId, filename);
+        // 原始文件落盘暂存：服务重启后仍能重试（早先用进程内 Map，重启即丢）
+        ingestFileStore.save(tenantId, docId, bytes);
         // wrap：把提交请求的链路 ID 带到入库工作线程，否则入库日志孤立无链路
         ingestExecutor.submit(TraceContext.wrap(
                 () -> runWithRetry(tenantId, kbId, docId, taskId, filename, bytes)));
@@ -181,15 +188,27 @@ public class KnowledgeAppService {
         if (!task.retryable(ingestMaxRetry)) {
             return false;
         }
-        byte[] bytes = ingestBytes.remove(cacheKey(tenantId, task.docId()));
+        // 从暂存介质重读原始文件（本地磁盘/对象存储），服务重启后依然可用
+        byte[] bytes = ingestFileStore.load(tenantId, task.docId()).orElse(null);
         if (bytes == null) {
-            // 服务重启后内存中的原始文件已丢失（对象存储上线前的已知限制）
-            ingestTaskRepository.markFailed(tenantId, taskId, "原始文件已释放，请重新上传");
+            ingestTaskRepository.markFailed(tenantId, taskId, "原始文件已丢失，请重新上传");
             return false;
         }
+        // 文件名从文档记录取——它随文档持久化，不像内存 Map 会随重启丢失
+        String filename = documentRepository.find(tenantId, task.docId())
+                .map(DocumentInfo::name)
+                .orElse("document");
         ingestTaskRepository.prepareRetry(tenantId, taskId);
-        ingestExecutor.submit(TraceContext.wrap(() -> execute(tenantId, task.kbId(), task.docId(), taskId,
-                fileNameOf(task.docId()), bytes)));
+        // 必须走 ingest：它负责写终态（成功 markDone / 失败 markFailed 并保留暂存文件）
+        ingestExecutor.submit(TraceContext.wrap(() -> {
+            try {
+                ingest(tenantId, task.kbId(), task.docId(), taskId, filename, bytes);
+            } catch (Exception e) {
+                // 失败态已由 ingest 落库，此处只记日志——重试是后台任务，异常无处可抛
+                log.warn("手动重试入库失败 tenant={} doc={} task={} err={}",
+                        tenantId, task.docId(), taskId, e.getMessage());
+            }
+        }));
         return true;
     }
 
@@ -203,6 +222,8 @@ public class KnowledgeAppService {
             int indexed = execute(tenantId, kbId, docId, taskId, filename, bytes);
             ingestTaskRepository.markDone(tenantId, taskId);
             documentRepository.updateStatus(tenantId, docId, DocumentInfo.STATUS_DONE, null);
+            // 成功后才清理暂存文件：失败态必须保留文件以便重试
+            ingestFileStore.delete(tenantId, docId);
             log.info("文档入库完成 tenant={} kb={} doc={} indexed={}", tenantId, kbId, docId, indexed);
             return indexed;
         } catch (Exception e) {
@@ -217,30 +238,47 @@ public class KnowledgeAppService {
         }
     }
 
-    /** 真正干活：解析 → 分片 → 落库 → 向量化，各阶段上报进度 */
+    /** 指标实现由 infra 注入；未注入时保持 NOOP，指标缺失不影响业务 */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setMetrics(MetricsRecorder metrics) {
+        this.metrics = metrics == null ? MetricsRecorder.NOOP : metrics;
+    }
+
+    /** 入库阶段计时包装：统一走 domain 端口，未接入时直接执行 */
+    private <T> T timed(String stage, java.util.function.Supplier<T> action) {
+        return metrics.timeStage(stage, action);
+    }
+
+    /** 真正干活：解析 → 分片 → 落库 → 向量化，各阶段上报进度与耗时指标 */
     private int execute(Long tenantId, Long kbId, Long docId, Long taskId, String filename, byte[] bytes) {
         ingestTaskRepository.updateProgress(tenantId, taskId,
                 IngestTask.STATUS_RUNNING, IngestTask.STAGE_PARSE, 10);
         documentRepository.updateStatus(tenantId, docId, DocumentInfo.STATUS_PROCESSING, null);
-        String text = parseText(filename, bytes);
+        // 分阶段计时：能直接看出瓶颈是解析、分片还是向量化
+        String text = timed(IngestTask.STAGE_PARSE, () -> parseText(filename, bytes));
         if (text.isBlank()) {
             throw new BizException(ResultCode.PARAM_ERROR, "文档内容为空");
         }
 
         ingestTaskRepository.updateProgress(tenantId, taskId,
                 IngestTask.STATUS_RUNNING, IngestTask.STAGE_SPLIT, 30);
-        List<Chunk> chunks = TextChunker.split(text, chunkSize, chunkOverlap);
+        List<Chunk> chunks = timed(IngestTask.STAGE_SPLIT,
+                () -> TextChunker.split(text, chunkSize, chunkOverlap));
         if (chunks.isEmpty()) {
             throw new BizException(ResultCode.PARAM_ERROR, "文档切分后无有效内容");
         }
 
         ingestTaskRepository.updateProgress(tenantId, taskId,
                 IngestTask.STATUS_RUNNING, IngestTask.STAGE_SAVE, 50);
-        documentRepository.saveChunks(tenantId, kbId, docId, chunks, 0);
+        timed(IngestTask.STAGE_SAVE, () -> {
+            documentRepository.saveChunks(tenantId, kbId, docId, chunks, 0);
+            return null;
+        });
 
         ingestTaskRepository.updateProgress(tenantId, taskId,
                 IngestTask.STATUS_RUNNING, IngestTask.STAGE_VECTOR, 70);
-        int indexed = knowledgeIndexer.index(tenantId, kbId, docId, chunks);
+        int indexed = timed(IngestTask.STAGE_VECTOR,
+                () -> knowledgeIndexer.index(tenantId, kbId, docId, chunks));
         documentRepository.updateChunkStatus(tenantId, docId, 1);
         return indexed;
     }
@@ -272,18 +310,6 @@ public class KnowledgeAppService {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
-    }
-
-    /** 原始文件缓存（进程内；接入对象存储后可移除） */
-    private final java.util.Map<String, byte[]> ingestBytes = new java.util.concurrent.ConcurrentHashMap<>();
-    private final java.util.Map<Long, String> ingestFileNames = new java.util.concurrent.ConcurrentHashMap<>();
-
-    private String cacheKey(Long tenantId, Long docId) {
-        return tenantId + ":" + docId;
-    }
-
-    private String fileNameOf(Long docId) {
-        return ingestFileNames.getOrDefault(docId, "document");
     }
 
     /** 检索调试台：输入问题查看命中分片与相似度 */

@@ -49,6 +49,7 @@ public class ChatClientFactory {
     /** 外部工具提供者（MCP Client starter 自动装配的 ToolCallbackProvider） */
     private final ObjectProvider<ToolCallbackProvider> externalToolProviders;
     private final KnowledgeTools knowledgeTools;
+    private final com.aihub.ai.infra.metrics.AiMetrics aiMetrics;
 
     @Value("${aihub.security.data-key:aihub-dev-data-key}")
     private String dataKey;
@@ -72,7 +73,8 @@ public class ChatClientFactory {
                              com.aihub.ai.infra.ai.DbChatMemory chatMemory,
                              ToolCallLogStore toolCallLogStore,
                              ObjectProvider<ToolCallbackProvider> externalToolProviders,
-                             KnowledgeTools knowledgeTools) {
+                             KnowledgeTools knowledgeTools,
+                             com.aihub.ai.infra.metrics.AiMetrics aiMetrics) {
         this.modelGateway = modelGateway;
         this.configRepository = configRepository;
         this.appRepository = appRepository;
@@ -82,6 +84,7 @@ public class ChatClientFactory {
         this.toolCallLogStore = toolCallLogStore;
         this.externalToolProviders = externalToolProviders;
         this.knowledgeTools = knowledgeTools;
+        this.aiMetrics = aiMetrics;
     }
 
     public ChatClient create(Long tenantId, Long appId, String scene) {
@@ -140,11 +143,11 @@ public class ChatClientFactory {
                 .toolObjects(new TimeTools(), knowledgeTools)
                 .build()
                 .getToolCallbacks()) {
-            callbacks.add(new AuditedToolCallback(callback, toolCallLogStore, "local"));
+            callbacks.add(new AuditedToolCallback(callback, toolCallLogStore, "local", aiMetrics));
         }
         externalToolProviders.orderedStream().forEach(provider -> {
             for (ToolCallback callback : provider.getToolCallbacks()) {
-                callbacks.add(new AuditedToolCallback(callback, toolCallLogStore, "mcp"));
+                callbacks.add(new AuditedToolCallback(callback, toolCallLogStore, "mcp", aiMetrics));
             }
         });
         if (!callbacks.isEmpty()) {

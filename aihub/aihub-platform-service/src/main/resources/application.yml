@@ -47,6 +47,10 @@ aihub:
   security:
     jwt-secret: ${AIHUB_JWT_SECRET:aihub-default-dev-secret-please-change-me-32bytes}
     jwt-expire-seconds: 7200
+    # API Key 的 HMAC 密钥：与 JWT 密钥分离，避免一处泄露牵连另一处
+    api-key-secret: ${AIHUB_APIKEY_SECRET:aihub-default-apikey-secret-please-change-me}
+    # 单租户可签发的有效 Key 上限
+    max-api-keys-per-tenant: 20
 
 management:
   endpoints:
