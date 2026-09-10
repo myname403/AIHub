@@ -45,9 +45,9 @@
 | M0 ✅ | 三服务骨架、JWT 鉴权、租户上下文、ArchUnit 卡口、docker-compose | 工程化、多租户 |
 | M1 ✅ | 模型网关（OpenAI 兼容协议族：openai/火山方舟/通义）、场景选模+主备降级、ChatClient 工厂（TTL 缓存）、**持久化会话记忆**、三种流式通道 | 第一章：ChatClient/Advisor/ChatMemory |
 | M2 ✅ | RAG 全链路：文档上传→解析→分片（段落+重叠）→向量化→检索→**回答带引用 [n]**；检索调试台；内置「天机AI助手」示例模板 | 第一章 ETL/VectorStore + 第二章 业务助手 |
-| M3 ✅ | 工具中心：@Tool 内置工具（模型自主调用）；MCP Client starter 已接入（配置即连外部 MCP Server） | 第三章 MCP |
-| M4 ✅ | Agent 内核：PlanningAgent 任务拆解 → AgentRegistry 按名派发 → Table/Chart/HtmlDoc 生成 Agent → **产物落盘可预览**；agent.step 全程事件流；子任务预算 | 第四章 MyManus |
-| M5 ✅ | **配额硬限流**（策略+原子累加+超限拦截）、用量落库、**PDF/DOCX 解析**、**WebSocket 通道**（/ws/ai，令牌握手校验）、**知识库管理页** | 综合深化 |
+| M3 ✅ | 工具中心：@Tool 内置工具 TimeTools / KnowledgeTools（模型自主调用）；**MCP Client 真集成**（配置即连，工具自动挂载）；**工具调用审计**落 `ai_tool_call_log` | 第三章 MCP |
+| M4 ✅ | Agent 内核：PlanningAgent 任务拆解 → AgentRegistry 按名派发 → Table/Chart/HtmlDoc 生成 Agent → **产物落盘可预览**；agent.step 全程事件流；**三重预算**（子任务数 / Token / 超时）；**服务端可中断**；**任务与步骤落库** | 第四章 MyManus |
+| M5 ✅ | **配额硬限流**（策略+原子累加+超限拦截）、**Token 用量真实统计**、**审计 Advisor（call/stream 双路径）**、**PDF/DOCX 解析**、**WebSocket 通道**（/ws/ai，令牌握手校验）、**知识库管理页** | 综合深化 |
 
 ## 三、快速启动
 
@@ -112,9 +112,15 @@ export AI_DEFAULT_CHAT_MODEL=deepseek-v3
 
 ```bash
 cd aihub-app
-# 用 HBuilderX 打开本目录 → 运行到浏览器 / 微信开发者工具
-# 或 CLI：npm i && npm run dev:h5
+# 方式 A：HBuilderX 打开本目录 → 运行到浏览器 / 微信开发者工具
+# 方式 B：命令行（需 Node >= 18）
+npm i
+npm run dev:h5          # H5，默认 http://localhost:5173
+npm run dev:mp-weixin   # 微信小程序，产物在 dist/dev/mp-weixin，用开发者工具打开
+npm run build:h5        # 生产构建
 ```
+
+> 两种方式的目录结构完全一致（`vite.config.js` 已把 `UNI_INPUT_DIR` 指回项目根），可随时互换。
 
 登录（demo / admin / admin123）→ 对话页可切换 **对话 / 知识库 / Agent** 三种模式。
 
@@ -144,6 +150,26 @@ curl -N -X POST http://127.0.0.1:8080/api/ai/chat/ndjson \
 # 返回 agent.step（think/act/observe）→ artifact（预览地址）事件流
 ```
 
+### 3.7 接入外部 MCP Server（M3）
+
+MCP Client 依赖已就位，挂载方式是"配置即连"——在 `application.yml` 里加连接即可，
+工具会自动注册到 ChatClient，调用记录写入 `ai_tool_call_log`。
+
+```yaml
+spring.ai.mcp.client:
+  toolcallback.enabled: true     # ★ 不开这个开关，MCP 工具不会生效
+  sse.connections.fetch.url: http://127.0.0.1:8931/sse
+  # stdio.connections.filesystem.command: npx
+  # stdio.connections.filesystem.args: ["-y","@modelcontextprotocol/server-filesystem","."]
+```
+
+两个已知坑（课程已踩）：
+- 只配 url 而不开 `toolcallback.enabled`，模型看不到任何 MCP 工具
+- stdio 传输传中文参数会乱码，需保证子进程以 UTF-8 启动
+
+内置工具目前有两个：`TimeTools`（时间/日期计算）与 `KnowledgeTools`（让模型自主检索知识库，
+即 Agentic RAG——与被动注入上下文的 RAG 模式互为补充）。
+
 ## 四、接口速查（经网关，需 Bearer Token）
 
 | 接口 | 说明 |
@@ -156,6 +182,7 @@ curl -N -X POST http://127.0.0.1:8080/api/ai/chat/ndjson \
 | `POST /api/ai/kb/search` | 检索调试台（命中分片 + 相似度） |
 | `POST /api/ai/kb/bind` | 应用绑定知识库 |
 | `GET /api/ai/artifact/{id}` | Agent 产物在线预览 |
+| `POST /api/ai/agent/cancel` | 取消进行中的 Agent 任务（按 conversationId，服务端真正终止后续子任务） |
 | `WS /ws/ai?token=JWT` | WebSocket 通道（Agent 长任务，双向） |
 
 事件帧：`{"i":序号,"e":"msg.start|token|rag.sources|agent.step|artifact|msg.end|error","ts":..,"data":{..}}`
@@ -163,10 +190,15 @@ curl -N -X POST http://127.0.0.1:8080/api/ai/chat/ndjson \
 ## 五、遗留事项（可选增强，架构已就位）
 
 1. **MCP Server 三模块**（service/sse/stdio）：把平台对话与知识检索暴露为 MCP 服务
+   （Client 侧已打通，Server 侧尚未实现）
 2. **浏览器控制 Agent**：接入 Playwright MCP（课程第四章的页面标注方案）
 3. **Nacos 配置迁移**：基础设施配置（超时/限流/开关）迁入 Nacos 热更新（`spring.config.import: optional:nacos:` 已就绪，standalone 模式下自动跳过）
 4. **Sentinel 规则持久化**：规则写入 Nacos DataSource
 5. **管理端更多页面**：模型管理 / 应用配置 / 用量看板（后端接口已具备，知识库管理页已完成）
+6. **RAG 引用落库**：目前引用通过 `rag.sources` 事件返回前端，刷新页面后不再回溯
+   （`ai_message_reference` 表尚未建立）
+7. **文档入库异步化**：当前上传后同步解析与向量化，大文件建议改为 `ai_ingest_task`
+   驱动 + 进度上报 + 失败重试
 
 ## 六、安全红线（务必遵守）
 

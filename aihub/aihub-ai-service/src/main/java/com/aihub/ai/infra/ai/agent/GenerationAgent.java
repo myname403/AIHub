@@ -42,7 +42,7 @@ public abstract class GenerationAgent extends BaseAgent {
 
                     任务：%s""".formatted(task.goal());
 
-            String html = llm(task.tenantId(), system, user);
+            String html = llm(task, system, user);
             html = stripCodeFence(html);
             if (html.isBlank() || !html.contains("<")) {
                 return new AgentResult(AgentResult.FAILED, "内容生成失败，请检查模型配置", List.of());

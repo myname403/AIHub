@@ -18,6 +18,7 @@ import org.springframework.stereotype.Service;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
@@ -61,11 +62,15 @@ public class QuotaService {
         }
 
         // day 优先于 month（更细粒度的先扣）。
-        // 注意：必须用 Comparator 而非手写三元比较——(a,b) -> a 是 day ? -1 : 1 不满足传递性，
-        // 策略数 >= 3 时会抛 "Comparison method violates its general contract"。
-        policies.sort(Comparator.comparing(p -> !"day".equalsIgnoreCase(p.getPeriod())));
+        // 两个注意点：
+        // ① 必须用 Comparator 而非手写三元比较——(a,b) -> a 是 day ? -1 : 1 不满足传递性，
+        //    策略数 >= 3 时会抛 "Comparison method violates its general contract"；
+        // ② 必须拷贝到新列表再排序——Mapper 返回的列表可能是不可变的（如 List.of / 缓存视图），
+        //    原地 sort 会抛 UnsupportedOperationException。
+        List<AiQuotaPolicyDO> sorted = new ArrayList<>(policies);
+        sorted.sort(Comparator.comparing(p -> !"day".equalsIgnoreCase(p.getPeriod())));
 
-        for (AiQuotaPolicyDO policy : policies) {
+        for (AiQuotaPolicyDO policy : sorted) {
             String periodKey = periodKey(policy.getPeriod());
             // 口径说明：ai_quota_policy 目前是租户级（无 app_id 列），
             // 因此用量也必须按租户级统计（app_id = NULL），否则会出现

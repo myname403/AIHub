@@ -55,6 +55,7 @@
 
 <script>
 import { streamChat } from '../../common/stream.js'
+import { post } from '../../common/request.js'
 
 const WELCOME = { role: 'assistant', content: '你好，我是 AIHub 智能助手。可以选择下方模式提问：\n· 对话：普通聊天\n· 知识库：基于知识库回答（带引用）\n· Agent：自动拆解任务并生成图表/表格/网页' }
 
@@ -102,10 +103,15 @@ export default {
       )
     },
     stop() {
+      // 关键：先通知服务端取消，否则后端 Agent 循环还会把剩余子任务跑完
+      if (this.conversationId) {
+        post('/api/ai/agent/cancel', { conversationId: this.conversationId }).catch(() => {})
+      }
       if (this.currentTask) {
         this.currentTask.abort()
       }
       this.streaming = false
+      this.statusText = '已停止'
     },
     onEvent(assistant, event) {
       const type = event.e || event.event

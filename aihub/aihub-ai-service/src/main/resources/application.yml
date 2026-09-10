@@ -104,9 +104,13 @@ aihub:
   # 会话记忆窗口
   memory:
     window-size: 20
-  # Agent 预算与产物
+  # Agent 三重预算（防止死循环与成本失控，见 06 号文档 R6）
   agent:
     max-sub-tasks: 3
+    # 单任务 Token 上限，0 表示不限制
+    max-tokens: ${AIHUB_AGENT_MAX_TOKENS:0}
+    # 单任务墙钟超时（毫秒）
+    timeout-ms: ${AIHUB_AGENT_TIMEOUT_MS:180000}
   artifact-dir: ${AIHUB_ARTIFACT_DIR:./data/artifacts}
   artifact-url-prefix: /api/ai/artifact
   # 平台服务不可用时的降级开关（见 07 号文档第 2 节）
