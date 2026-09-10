@@ -1,0 +1,24 @@
+# 免 Docker 单机模式：不依赖 Nacos，网关直连各服务
+# 启动方式：java -jar aihub-gateway.jar --spring.profiles.active=standalone
+#
+# 前提：本机需有 MySQL 8（建库 aihub_platform / aihub_ai），
+#       RAG 功能需 Redis Stack；不用 RAG 可不装 Redis。
+# Nacos / Sentinel 均可后补（配置见 docker-compose.yml）。
+
+spring:
+  cloud:
+    nacos:
+      discovery:
+        enabled: false
+      config:
+        enabled: false
+    gateway:
+      routes:
+        - id: aihub-platform
+          uri: http://127.0.0.1:8081
+          predicates:
+            - Path=/auth/**,/api/platform/**
+        - id: aihub-ai
+          uri: http://127.0.0.1:8082
+          predicates:
+            - Path=/api/ai/**

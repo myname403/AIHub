@@ -1,0 +1,11 @@
+# 单机模式：关闭 Nacos（配置中心与注册中心），服务直接启动
+# 启动：java -jar aihub-platform-service.jar --spring.profiles.active=standalone
+spring:
+  cloud:
+    nacos:
+      discovery:
+        enabled: false
+      config:
+        enabled: false
+  config:
+    import: []

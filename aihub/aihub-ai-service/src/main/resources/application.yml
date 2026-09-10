@@ -1,0 +1,128 @@
+server:
+  port: 8082
+
+spring:
+  application:
+    name: aihub-ai-service
+  datasource:
+    url: jdbc:mysql://${MYSQL_HOST:127.0.0.1}:${MYSQL_PORT:3306}/${MYSQL_DB_AI:aihub_ai}?useUnicode=true&characterEncoding=utf8mb4&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
+    username: ${MYSQL_USER:root}
+    password: ${MYSQL_PASSWORD:root123456}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    locations: classpath:db/migration
+  cloud:
+    nacos:
+      discovery:
+        server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+        namespace: ${NACOS_NAMESPACE:public}
+        group: ${NACOS_GROUP:DEFAULT_GROUP}
+      config:
+        server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+        namespace: ${NACOS_NAMESPACE:public}
+        group: ${NACOS_GROUP:DEFAULT_GROUP}
+        file-extension: yaml
+    sentinel:
+      transport:
+        dashboard: ${SENTINEL_DASHBOARD:127.0.0.1:8858}
+  # 从 Nacos 拉取基础设施配置（改配置无需重启）
+  config:
+    import:
+      - optional:nacos:aihub-common.yaml
+      - optional:nacos:aihub-ai-service.yaml
+
+# Spring AI（M1 起生效；实际模型与密钥优先从 Nacos/DB 读取）
+spring.ai:
+  openai:
+    api-key: ${AI_OPENAI_API_KEY:sk-placeholder}
+    base-url: ${AI_OPENAI_BASE_URL:https://api.openai.com}
+  vectorstore:
+    redis:
+      index-name: ${AI_VS_INDEX:spring-ai-index}
+      prefix: ${AI_VS_PREFIX:embedding:}
+      initialize-schema: false
+  # MCP Client（M3）：配置即连外部 MCP Server，工具会自动挂到 ChatClient。
+  # 两个必知坑（课程已踩）：
+  #   ① toolcallback.enabled 默认为 false，不开这个开关 MCP 工具不会生效；
+  #   ② stdio 传输传中文参数会乱码，需确保子进程以 UTF-8 启动。
+  # 未配置任何连接时，功能自动降级为「仅内置工具」，不影响启动。
+  mcp:
+    client:
+      enabled: ${AI_MCP_ENABLED:true}
+      name: aihub
+      type: SYNC
+      request-timeout: 30s
+      toolcallback:
+        enabled: ${AI_MCP_TOOLCALLBACK_ENABLED:true}
+      # 用法示例（按需取消注释并填入真实地址）：
+      # sse:
+      #   connections:
+      #     fetch:
+      #       url: http://127.0.0.1:8931/sse
+      # stdio:
+      #   connections:
+      #     filesystem:
+      #       command: npx
+      #       args:
+      #         - -y
+      #         - '@modelcontextprotocol/server-filesystem'
+      #         - .
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    db-config:
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+
+aihub:
+  # 敏感字段加密密钥（AES-GCM）。生产环境放入 Nacos，切勿使用默认值
+  security:
+    data-key: ${AIHUB_DATA_KEY:aihub-dev-data-key}
+  # 模型默认配置（ai_model_route 未配置时的兜底，即 spring.ai.openai 自动装配）
+  model:
+    default-chat-model: ${AI_DEFAULT_CHAT_MODEL:gpt-4o-mini}
+    default-fallback-model: ${AI_DEFAULT_FALLBACK_MODEL:}
+  # ChatClient 装配缓存 TTL（秒），支持 DB/Nacos 配置变更后自动刷新
+  chat-client:
+    cache-seconds: 60
+  # RAG 检索参数（可通过 Nacos 热更新）
+  rag:
+    top-k: 4
+    similarity-threshold: 0.6
+    chunk-size: 500
+    chunk-overlap: 100
+  # 会话记忆窗口
+  memory:
+    window-size: 20
+  # Agent 预算与产物
+  agent:
+    max-sub-tasks: 3
+  artifact-dir: ${AIHUB_ARTIFACT_DIR:./data/artifacts}
+  artifact-url-prefix: /api/ai/artifact
+  # 平台服务不可用时的降级开关（见 07 号文档第 2 节）
+  degrade:
+    quota:
+      enabled: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  level:
+    com.aihub: info

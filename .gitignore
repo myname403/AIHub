@@ -1,0 +1,47 @@
+# ---------- Maven / Java ----------
+target/
+!.mvn/wrapper/maven-wrapper.jar
+*.class
+*.jar
+*.war
+*.ear
+*.log
+hs_err_pid*
+replay_pid*
+
+# ---------- Node / 前端 ----------
+node_modules/
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+dist/
+.hbuilderx/
+unpackage/
+
+# ---------- IDE ----------
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.settings/
+.project
+.classpath
+.factorypath
+
+# ---------- 运行时产物（AI 生成的表格/图表/文档） ----------
+aihub/aihub-ai-service/artifacts/
+artifacts/
+
+# ---------- 本地环境 ----------
+.env
+.env.local
+*.local.yml
+
+# ---------- 系统文件 ----------
+.DS_Store
+Thumbs.db
+
+# ---------- WorkBuddy 会话数据（保留项目记忆，忽略临时缓存） ----------
+.workbuddy/tmp/
+.workbuddy/cache/

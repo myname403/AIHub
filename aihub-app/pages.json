@@ -1,0 +1,28 @@
+{
+  "pages": [
+    {
+      "path": "pages/chat/chat",
+      "style": {
+        "navigationBarTitleText": "AIHub 对话"
+      }
+    },
+    {
+      "path": "pages/login/login",
+      "style": {
+        "navigationBarTitleText": "登录"
+      }
+    },
+    {
+      "path": "pages/kb/kb",
+      "style": {
+        "navigationBarTitleText": "知识库管理"
+      }
+    }
+  ],
+  "globalStyle": {
+    "navigationBarTextStyle": "black",
+    "navigationBarTitleText": "AIHub",
+    "navigationBarBackgroundColor": "#FFFFFF",
+    "backgroundColor": "#F5F6F8"
+  }
+}

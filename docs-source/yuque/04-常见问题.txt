@@ -1,0 +1,57 @@
+# 常见问题
+URL: https://www.yuque.com/zhangzhijun-91vgw/javaai1.0/vondhk60lgku579z
+
+常见问题
+MD
+免费使用
+常见问题
+1
+mac版虚拟机无法启动seata
+
+2
+请求后显示500，显示creater没有默认值
+
+3
+虚拟机无法ping通外网
+
+4
+前端请求访问api失败
+
+5
+Cannot invoke "java.util.List.size()" because "source" is null
+
+6
+vscode中无法读取nacos配置
+
+7
+无法访问前端页面
+
+​
+
+若有收获，就点个赞吧
+
+张志君2025-07-13 15:393216
+0
+IP 属地山西
+举报
+分享到：
+注册 / 登录 语雀进行评论
+1598字
+关于语雀使用帮助数据安全服务协议English快速注册
+张志君
+Java+AI智能应用开发（线上训练营）v1.0
+搜索
+Ctrl + J
+首页
+目录
+第一章（AI基础与SpringAI）
+第二章（天机学堂AI助手智能体）
+第三章（Spring AI MCP 实战）
+第四章（独立智能体开发-MyManus）
+课程资料
+常见问题
+Mac 版 seata镜像制作
+知识库-课程数据
+课程推荐助手-提示词参考
+天机AI助手提示词
+大纲

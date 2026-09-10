@@ -1,0 +1,11 @@
+# 单机模式：关闭 Nacos；AI 服务直接启动（配额/用量上报会自动降级）
+# 启动：java -jar aihub-ai-service.jar --spring.profiles.active=standalone
+spring:
+  cloud:
+    nacos:
+      discovery:
+        enabled: false
+      config:
+        enabled: false
+  config:
+    import: []

@@ -1,0 +1,65 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: aihub-gateway
+  main:
+    web-application-type: reactive
+  cloud:
+    nacos:
+      discovery:
+        server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+        namespace: ${NACOS_NAMESPACE:public}
+        group: ${NACOS_GROUP:DEFAULT_GROUP}
+      config:
+        server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+        namespace: ${NACOS_NAMESPACE:public}
+        group: ${NACOS_GROUP:DEFAULT_GROUP}
+        file-extension: yaml
+    gateway:
+      discovery:
+        locator:
+          enabled: false
+      routes:
+        - id: aihub-platform
+          uri: lb://aihub-platform-service
+          predicates:
+            - Path=/auth/**,/api/platform/**
+        - id: aihub-ai
+          uri: lb://aihub-ai-service
+          predicates:
+            - Path=/api/ai/**
+    sentinel:
+      transport:
+        dashboard: ${SENTINEL_DASHBOARD:127.0.0.1:8858}
+      # 网关限流后的兜底响应
+      scg:
+        fallback:
+          mode: response
+          response-status: 429
+          response-body: '{"code":10006,"message":"请求过于频繁，请稍后再试"}'
+
+  # 从 Nacos 拉取配置（改配置无需重启，即热更新）
+  config:
+    import:
+      - optional:nacos:aihub-common.yaml
+      - optional:nacos:aihub-gateway.yaml
+
+aihub:
+  security:
+    # 生产环境请放入 Nacos 并开启鉴权，不要使用默认值
+    jwt-secret: ${AIHUB_JWT_SECRET:aihub-default-dev-secret-please-change-me-32bytes}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,gateway
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  level:
+    com.aihub: info
