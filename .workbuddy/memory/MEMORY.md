@@ -11,10 +11,16 @@
   Set-Location 'E:\微服务\javaAI\javaai\aihub'
   & 'D:\Java_JDK\maven-mvnd-1.0.2-windows-amd64\bin\mvnd.cmd' test
   ```
-- **只能用 PowerShell 调 `mvnd.cmd`**。在 bash 下调 `mvnd.sh` 会把 `D:\...` 错转成 `\d\...`，
+- 调 `mvnd.cmd` 两个 shell 都可用（Bash 里 `export JAVA_HOME='D:\Java_JDK\jdk21.0.8_9' && mvnd.cmd ...`
+  实测正常）。**别用 `mvnd.sh`**：bash 下会把 `D:\...` 错转成 `\d\...`，
   报 `Could not get a real path from path \d\Java_JDK\...`。
-- PowerShell 里若命令输出被管道吞掉，用 `*>&1 | Tee-Object -FilePath <log> | Out-Null`
-  落盘后再 grep，否则看不到 BUILD 结果。
+- **★ 会话工具的 stdout 可能中途失效**（PowerShell 工具连 `Write-Output` 都无输出）。
+  构建命令一律落盘再读：`mvnd.cmd ... > /tmp/xx.log 2>&1; echo EXIT=$?; grep ... 落盘文件`。
+- **★ mvnd 的本地仓库是 `D:\Java_JDK\maven-mvnd-1.0.2-windows-amd64\mvn_repo`，
+  不是 `~/.m2`**（-X 日志里 javac classpath 揭示）。排查依赖缺失/损坏先看对仓库；
+  `dependency:tree` 只解析 POM，树里有版本号 ≠ jar 已下载可用。
+- **编译报「程序包xxx不存在」先 grep jar 内容和 import 包名，再怀疑环境**
+  （MinIO 轮教训：包名 `com.minio` 写错，实际是 `io.minio`，白排查了五轮仓库问题）。
 - **★ 跑服务/验证端口前先看环境变量**：本机宿主进程会注入 `SERVER__PORT=62350`，
   宽松绑定下**优先级高于 `application.yml` 里的 `server.port`**，会让 Tomcat 起在
   62350 上、还可能因端口被宿主自己占用而启动失败（报 "Port 62350 was already in use"）。
@@ -31,7 +37,8 @@
 - **application 不得依赖 infra / web**。需要 infra 能力时，**先在 domain 建 SPI 端口**，
   实现放 infra。已用过两次：
   - `domain/spi/MetricsRecorder`（含 `NOOP` 常量实现）← `infra/metrics/AiMetrics`
-  - `domain/spi/IngestFileStore` ← `infra/storage/LocalIngestFileStore`
+  - `domain/spi/IngestFileStore` ← `infra/storage/LocalIngestFileStore`（默认）
+    与 `MinioIngestFileStore`（`aihub.storage.type` 切换，注册收敛在 StorageConfiguration）
 - **web 不得触碰 Spring AI 与 infra**。
 - `infra.ai` 不得依赖 `infra.persistence` / `infra.security`。
 - **坑**：`static final String` 常量会被编译期内联，字节码里没有类引用，
@@ -73,8 +80,13 @@
 
 - 单测：JUnit5 + Mockito（严格桩，多余的 stub 会报 `UnnecessaryStubbingException`）。
 - 指标测试用 `SimpleMeterRegistry`；工具类用 `ReflectionTestUtils` 注入 `@Value` 字段。
-- 改动后跑全量：`mvnd test`（当前 **259 个用例**：common 30 / platform 41 / ai-service 144 /
-  mcp-service 42 / mcp-sse 1 / mcp-stdio 1；另有 `BrowserEndToEndIT` 默认不跑，需真实 Chrome）。
+- 改动后跑全量：`mvnd test`（当前 **276 个用例**：common 30 / platform 44 / ai-service 158 /
+  mcp-service 42 / mcp-sse 1 / mcp-stdio 1；另有 `BrowserEndToEndIT`、`MinioIngestFileStoreIT`
+  默认不跑，分别需真实 Chrome / MinIO）。
+- **Mockito（Boot 3.5 默认 inline mock maker）stub 返回值会被按方法声明的返回类型强转**：
+  stub `getObject` 这类返回具体类型的方法时，Answer 必须返回真实类型
+  （`new GetObjectResponse(okhttp3.Headers, bucket, region, object, stream)`），
+  返回裸 InputStream 会 ClassCastException（被 catch 吞掉后表现为「测试期望值是 empty」）。
 - 提交前再跑一次 `mvnd -DskipTests install` 确认 4 份可执行 jar 产出正常。
 - 测试会**真实抓到实现 bug**（历史上抓到过 convOf 边界、retry 绕过终态写入等），
   失败时优先怀疑实现而不是改断言。
@@ -106,3 +118,33 @@
   gw-flow，服务侧 flow/degrade；规则样例在 `aihub/docs/nacos/`（data-id 同名 JSON，
   MVC 资源名 `POST:/path`）；NacosDataSourceProperties 支持 namespace（javap 验证过）。
 - 无 Nacos 时 Sentinel 数据源拉取失败仅 WARN，不阻断启动。
+
+## 十、对象存储（aihub.storage.*）
+
+- `IngestFileStore` 双实现：local（默认，单机）与 minio（多实例共享入库原始文件，
+  重试不挑节点）；SDK 用 `io.minio:minio:8.5.17`（8.x 最终稳定版，**包名 io.minio**）。
+- 注册收敛在 `StorageConfiguration`（与 BrowserConfiguration 同思路）：
+  两个嵌套 @ConditionalOnProperty 类按 `aihub.storage.type` 二选一。
+- **未知 type 值 fail-fast**（无 bean → 启动期注入失败），绝不静默回落 local——
+  静默回落会让多实例部署悄悄退化成各节点各存各的。
+- MinioClient 构建期无网络 IO；**桶懒初始化**（volatile 标记 + 双检锁，
+  确认失败不置 ready 下次重试）；delete 不做 ensureBucket（清理属 GC 性质）。
+- 异常语义与 Local 对齐：save/delete 吞异常只记日志；load 失败返回 empty
+  （应用层落 failed 可重试）。对象键 `{tenantId}/{docId}.bin` 与本地目录布局一致。
+- docker-compose 有 minio 服务（9000 API / 9001 控制台，aihub/aihub12345）；
+  真实 E2E 是 `MinioIngestFileStoreIT`（独立桶 aihub-ingest-it，需 Docker）。
+
+## 十一、接口文档（springdoc-openapi）
+
+- springdoc 2.8.17（Boot 3.5.x 对应 2.x 最终稳定版）；只加在 ai-service /
+  platform-service 两个 REST 服务，common 不加（会传染全模块）。
+- **父 pom 编译插件必须开 `<parameters>true</parameters>`**：否则 Boot 3.2+ 下
+  未显式命名的 @RequestParam 不出现在文档（springdoc 官方 FAQ）。
+- TenantResolveInterceptor 排除名单含 `/v3/api-docs/**`、`/swagger-ui/**`、
+  `/swagger-ui.html`——不排除则开 swagger-ui 即被租户拦截器拒绝。
+- 每服务一个 OpenApiConfig：bearerAuth scheme（UI Authorize 按钮）+
+  OperationCustomizer 补 X-Tenant-Id/X-User-Id 头参数（直连调试用）；
+  **/auth 前缀跳过**（AnnotatedElementUtils 读类级 @RequestMapping 判断，别比对类名）。
+- 生产关闭：`springdoc.api-docs.enabled=false` + 网关/防火墙限服务端口直连。
+- 新增接口无需手写文档：controller 方法即文档；流式接口（SSE/NDJSON）在 UI
+  里是一次性响应，联调用 curl。

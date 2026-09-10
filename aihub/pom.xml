@@ -161,6 +161,9 @@
                     <configuration>
                         <source>17</source>
                         <target>17</target>
+                        <!-- springdoc-openapi 要求：Boot 3.2+ 不开 -parameters 时，
+                             未显式命名的方法参数（@RequestParam 等）不会出现在 API 文档 -->
+                        <parameters>true</parameters>
                         <annotationProcessorPaths>
                             <path>
                                 <groupId>org.projectlombok</groupId>

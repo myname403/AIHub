@@ -84,7 +84,7 @@ java -jar aihub-ai-service/target/aihub-ai-service.jar --spring.profiles.active=
 ```bash
 # 本机 PATH 的 java 是 1.8，必须显式指定 JDK17
 cd aihub
-JAVA_HOME="D:/Java_JDK/jdk-17.0.1" \
+JAVA_HOME="D:/Java_JDK/jdk21.0.8_9" \
   "D:/Java_JDK/maven-mvnd-1.0.2-windows-amd64/bin/mvnd.cmd" clean install
 
 java -jar aihub-gateway/target/aihub-gateway.jar
@@ -381,6 +381,27 @@ set AIHUB_STORAGE_TYPE=minio      # 不配置即保持 local，standalone 模式
 - 未知后端值（如打错字 `miniio`）启动期 fail-fast，**绝不静默回落本地盘**
   ——那会让多实例部署悄悄退化成各存各的。
 
+### 3.12 接口文档（OpenAPI 3 / Swagger UI）
+
+两个 REST 服务接入 **springdoc-openapi 2.8.17**（Boot 3.5.x 对应的最终稳定版，
+老 Springfox 已停更、不兼容 Boot 3），文档由代码自动生成，无需手写维护：
+
+| 服务 | Swagger UI | OpenAPI JSON |
+| --- | --- | --- |
+| 平台服务（认证 / Key / 配额） | <http://127.0.0.1:8081/swagger-ui.html> | `/v3/api-docs` |
+| AI 服务（对话 / 知识库 / Agent） | <http://127.0.0.1:8082/swagger-ui.html> | `/v3/api-docs` |
+
+调试须知：
+
+- UI 右上角 **Authorize** 按钮填 JWT（`/auth/login` 返回的 token），全局生效；
+- 服务直连调试还需带 **X-Tenant-Id** 头（UI 每个接口已内置该参数框）——
+  走网关（8080）时由网关自动注入，客户端伪造的同名头会被剥离；
+- 流式接口（SSE / NDJSON）在 UI 中展示为一次性响应，联调请看响应体或用 curl；
+- **生产环境**：配置 `springdoc.api-docs.enabled=false` 关闭，
+  并在网关/防火墙层面限制服务端口（8081/8082）直连；
+- 编译参数已开 `-parameters`（父 pom）——不加它，Boot 3.2+ 下未显式命名的
+  `@RequestParam` 不会出现在文档里（springdoc 官方 FAQ 点名的坑）。
+
 ## 四、接口速查（经网关，需 Bearer Token）
 
 | 接口 | 说明 |
@@ -463,7 +484,9 @@ curl -X POST http://127.0.0.1:8080/api/ai/chat \
 3. **MCP Server 的 streamable-http 传输**：`spring.ai.mcp.server.protocol` 已支持
    `streamable` / `stateless`，需要时改配置即可，工具实现不用动
 
-> 已完成（原遗留事项）：**对象存储替换本地磁盘**（MinIO / S3 实现，`aihub.storage.type`
+> 已完成（原遗留事项）：**接口文档 OpenAPI 3 / Swagger UI**（springdoc 2.8.17，
+> 两个 REST 服务自动生成文档，见 3.12）、
+> **对象存储替换本地磁盘**（MinIO / S3 实现，`aihub.storage.type`
 > 一键切换，业务代码零改动，见 3.11）、
 > **Nacos 配置迁移**（热更新参数收拢为 `@ConfigurationProperties`，
 > 模板见 `docs/nacos/`，见 3.10）、

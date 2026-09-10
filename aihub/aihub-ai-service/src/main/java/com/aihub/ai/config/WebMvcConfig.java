@@ -30,7 +30,9 @@ public class WebMvcConfig implements WebMvcConfigurer {
                 .order(0);
         registry.addInterceptor(new TenantResolveInterceptor())
                 .addPathPatterns("/**")
-                .excludePathPatterns("/actuator/**", "/error")
+                // swagger 端点放行：直连调试用；生产环境用 springdoc.api-docs.enabled=false 关闭
+                .excludePathPatterns("/actuator/**", "/error",
+                        "/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html")
                 .order(1);
     }
 

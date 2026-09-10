@@ -187,6 +187,16 @@ management:
         aihub.chat.latency: true
         aihub.ingest.latency: true
 
+# 接口文档（springdoc / Swagger UI）：http://127.0.0.1:8082/swagger-ui.html
+# 生产不对外暴露时改 enabled=false，并在网关/防火墙限制服务端口直连
+springdoc:
+  api-docs:
+    enabled: true
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: alpha
+    tags-sorter: alpha
+
 logging:
   level:
     com.aihub: info
