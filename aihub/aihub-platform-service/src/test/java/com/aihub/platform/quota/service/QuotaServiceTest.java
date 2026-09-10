@@ -88,6 +88,92 @@ class QuotaServiceTest {
                 .upsertConsume(any(long.class), eq(1001L), eq(null), eq("request"), any(), eq(1L));
     }
 
+    /* ---------------- 多维扣减（M5） ---------------- */
+
+    private PlatformClient.QuotaConsumeRequest consumeRequest(PlatformClient.QuotaItem... items) {
+        return new PlatformClient.QuotaConsumeRequest("req-2", 1001L, "9001", List.of(items));
+    }
+
+    @Test
+    void multipleDimensionsAllCharged() {
+        when(policyMapper.selectList(any())).thenReturn(List.of(policy("day", 100000L)));
+        when(usageMapper.selectOne(any())).thenReturn(usage(0L));
+
+        PlatformClient.QuotaResult result = quotaService.consume(consumeRequest(
+                new PlatformClient.QuotaItem("request", 1),
+                new PlatformClient.QuotaItem("token", 500)));
+
+        assertTrue(result.allowed());
+        // request 与 token 两个维度都应被累加
+        org.mockito.Mockito.verify(usageMapper)
+                .upsertConsume(any(long.class), eq(1001L), eq(null), eq("request"), any(), eq(1L));
+        org.mockito.Mockito.verify(usageMapper)
+                .upsertConsume(any(long.class), eq(1001L), eq(null), eq("token"), any(), eq(500L));
+    }
+
+    /**
+     * 关键语义：任一维度超限 → 整体拒绝，且<b>不产生任何扣减</b>。
+     * 否则会出现「request 扣了、token 没扣」的脏用量。
+     */
+    @Test
+    void rejectionDoesNotPartiallyConsume() {
+        when(policyMapper.selectList(any())).thenReturn(List.of(policy("day", 100L)));
+        when(usageMapper.selectOne(any())).thenReturn(usage(99L));
+
+        PlatformClient.QuotaResult result = quotaService.consume(consumeRequest(
+                new PlatformClient.QuotaItem("request", 1),   // 99 + 1 = 100，刚好不超
+                new PlatformClient.QuotaItem("token", 500))); // 99 + 500 > 100，超限
+
+        assertFalse(result.allowed(), "token 维度超限应整体拒绝");
+        org.mockito.Mockito.verify(usageMapper, org.mockito.Mockito.never())
+                .upsertConsume(any(long.class), any(long.class), any(), any(), any(), any(long.class));
+    }
+
+    @Test
+    void dimensionWithoutPolicyIsSkipped() {
+        // 只给 request 配了策略，token 未配置 → token 放行、request 正常扣
+        when(policyMapper.selectList(any()))
+                .thenReturn(List.of(policy("day", 1000L)))
+                .thenReturn(List.of());
+        when(usageMapper.selectOne(any())).thenReturn(usage(0L));
+
+        PlatformClient.QuotaResult result = quotaService.consume(consumeRequest(
+                new PlatformClient.QuotaItem("request", 1),
+                new PlatformClient.QuotaItem("token", 999999)));
+
+        assertTrue(result.allowed(), "未配置策略的维度应放行");
+    }
+
+    @Test
+    void emptyItemsIsAllowed() {
+        assertTrue(quotaService.consume(consumeRequest()).allowed(), "无扣减项应直接放行");
+    }
+
+    @Test
+    void defaultDimensionFallsBackToRequest() {
+        when(policyMapper.selectList(any())).thenReturn(List.of(policy("day", 1000L)));
+        when(usageMapper.selectOne(any())).thenReturn(usage(0L));
+
+        quotaService.consume(consumeRequest(new PlatformClient.QuotaItem(null, 1)));
+
+        org.mockito.Mockito.verify(usageMapper)
+                .upsertConsume(any(long.class), eq(1001L), eq(null), eq("request"), any(), eq(1L));
+    }
+
+    @Test
+    void tokenDimensionIsSeparateFromRequest() {
+        when(policyMapper.selectList(any())).thenReturn(List.of(policy("day", 3000000L)));
+        when(usageMapper.selectOne(any())).thenReturn(usage(2999998L));
+
+        // 用量 2999998 + 2 = 3000000，刚好用尽但不超限
+        assertTrue(quotaService.consume(consumeRequest(
+                new PlatformClient.QuotaItem("token", 2))).allowed());
+
+        // 同样用量下再要 3 个就会越界（2999998 + 3 > 3000000）
+        assertFalse(quotaService.consume(consumeRequest(
+                new PlatformClient.QuotaItem("token", 3))).allowed());
+    }
+
     private AiQuotaPolicyDO policy(String period, long limit) {
         AiQuotaPolicyDO policy = new AiQuotaPolicyDO();
         policy.setTenantId(1001L);

@@ -18,7 +18,10 @@ public class AiMessageDO {
     private Long id;
 
     private Long tenantId;
+    /** 历史遗留的数字会话 ID；新数据使用 convKey */
     private Long conversationId;
+    /** 真实会话 ID（字符串，如 a3f2c1e09b8d4a7f）；记忆检索以它为准 */
+    private String convKey;
     /** user / assistant / tool */
     private String role;
     private String content;

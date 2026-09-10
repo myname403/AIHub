@@ -1,6 +1,7 @@
 package com.aihub.gateway.filter;
 
 import com.aihub.common.tenant.TenantContext;
+import com.aihub.common.trace.TraceContext;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import org.springframework.beans.factory.annotation.Value;
@@ -95,7 +96,10 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
     private Mono<Void> unauthorized(ServerWebExchange exchange, String message) {
         exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
         exchange.getResponse().getHeaders().set(HttpHeaders.CONTENT_TYPE, "application/json;charset=UTF-8");
-        String body = String.format("{\"code\":10002,\"message\":\"%s\"}", message);
+        // 带上链路 ID：401 多发生在客户端配置错误时，没有 traceId 很难排查
+        String traceId = exchange.getResponse().getHeaders().getFirst(TraceContext.HEADER);
+        String tracePart = traceId == null ? "" : ",\"traceId\":\"" + traceId + "\"";
+        String body = String.format("{\"code\":10002,\"message\":\"%s\"%s}", message, tracePart);
         return exchange.getResponse()
                 .writeWith(Mono.just(exchange.getResponse()
                         .bufferFactory()

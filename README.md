@@ -44,10 +44,10 @@
 | --- | --- | --- |
 | M0 ✅ | 三服务骨架、JWT 鉴权、租户上下文、ArchUnit 卡口、docker-compose | 工程化、多租户 |
 | M1 ✅ | 模型网关（OpenAI 兼容协议族：openai/火山方舟/通义）、场景选模+主备降级、ChatClient 工厂（TTL 缓存）、**持久化会话记忆**、三种流式通道 | 第一章：ChatClient/Advisor/ChatMemory |
-| M2 ✅ | RAG 全链路：文档上传→解析→分片（段落+重叠）→向量化→检索→**回答带引用 [n]**；检索调试台；内置「天机AI助手」示例模板 | 第一章 ETL/VectorStore + 第二章 业务助手 |
+| M2 ✅ | RAG 全链路：文档上传→解析→分片（段落+重叠）→向量化→检索→**回答带引用 [n]**；**引用落库可回溯**；**入库异步化（进度 + 重试）**；检索调试台；内置「天机AI助手」示例模板 | 第一章 ETL/VectorStore + 第二章 业务助手 |
 | M3 ✅ | 工具中心：@Tool 内置工具 TimeTools / KnowledgeTools（模型自主调用）；**MCP Client 真集成**（配置即连，工具自动挂载）；**工具调用审计**落 `ai_tool_call_log` | 第三章 MCP |
 | M4 ✅ | Agent 内核：PlanningAgent 任务拆解 → AgentRegistry 按名派发 → Table/Chart/HtmlDoc 生成 Agent → **产物落盘可预览**；agent.step 全程事件流；**三重预算**（子任务数 / Token / 超时）；**服务端可中断**；**任务与步骤落库** | 第四章 MyManus |
-| M5 ✅ | **配额硬限流**（策略+原子累加+超限拦截）、**Token 用量真实统计**、**审计 Advisor（call/stream 双路径）**、**PDF/DOCX 解析**、**WebSocket 通道**（/ws/ai，令牌握手校验）、**知识库管理页** | 综合深化 |
+| M5 ✅ | **配额硬限流**（策略+原子累加+超限拦截）、**配额多维度**（request / token / doc / task，一次调用批量原子扣减）、**Token 用量真实统计**、**审计 Advisor（call/stream 双路径）**、**TraceId 全链路**（网关起点 → Feign 透传 → MDC 日志 → 响应体）、**PDF/DOCX 解析**、**WebSocket 通道**（/ws/ai，令牌握手校验）、**知识库管理页** | 综合深化 |
 
 ## 三、快速启动
 
@@ -131,14 +131,25 @@ TOKEN=$(curl -s -X POST http://127.0.0.1:8080/auth/login \
   -H 'Content-Type: application/json' \
   -d '{"tenantCode":"demo","username":"admin","password":"admin123"}' | jq -r .data.token)
 
-# 1) 上传课程数据文档（支持 txt/md；PDF 随后接入）
-curl -X POST http://127.0.0.1:8080/api/ai/kb/9001/documents \
-  -H "Authorization: Bearer $TOKEN" -F "file=@docs-source/yuque/05-知识库-课程数据.txt"
+# 1) 上传知识库文档（支持 txt/md/pdf/docx）——异步提交，立即返回 taskId
+TASK=$(curl -s -X POST http://127.0.0.1:8080/api/ai/kb/9001/documents \
+  -H "Authorization: Bearer $TOKEN" -F "file=@docs-source/yuque/05-知识库-课程数据.txt" | jq -r .data.taskId)
 
-# 2) 知识库模式提问，回答自动带 [n] 引用与相似度
+# 2) 轮询入库进度（stage: parse → split → save → vector；status: 1处理中 2完成 3失败）
+curl -s http://127.0.0.1:8080/api/ai/kb/ingest/$TASK -H "Authorization: Bearer $TOKEN" | jq .data
+
+# 3) 失败可重试（服务重启后原始文件已释放时会提示重新上传）
+curl -X POST http://127.0.0.1:8080/api/ai/kb/ingest/$TASK/retry -H "Authorization: Bearer $TOKEN"
+
+# 4) 知识库模式提问，回答自动带 [n] 引用与相似度
 curl -N -X POST http://127.0.0.1:8080/api/ai/chat/ndjson \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   -d '{"appId":9001,"message":"推荐一门适合零基础的Java课程","scene":"rag"}'
+
+# 5) 引用溯源：刷新页面后仍可查回该会话的引用来源
+curl -X POST http://127.0.0.1:8080/api/ai/chat/references \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"conversationId":"<上一步返回的会话ID>"}'
 ```
 
 ### 3.6 体验 Agent（任务自动拆解 + 产物）
@@ -178,14 +189,29 @@ spring.ai.mcp.client:
 | `POST /api/ai/chat/sse` | H5 流式（SSE） |
 | `POST /api/ai/chat/ndjson` | 小程序流式（NDJSON，禁 gzip） |
 | `POST /api/ai/kb` · `GET /api/ai/kb` | 创建 / 列出知识库 |
-| `POST /api/ai/kb/{id}/documents` | 上传文档并入库 |
+| `POST /api/ai/kb/{id}/documents` | 上传文档并入库（异步，返回 taskId） |
+| `GET /api/ai/kb/ingest/{taskId}` | 查询入库进度（前端轮询） |
+| `POST /api/ai/kb/ingest/{taskId}/retry` | 重试失败的入库任务 |
 | `POST /api/ai/kb/search` | 检索调试台（命中分片 + 相似度） |
 | `POST /api/ai/kb/bind` | 应用绑定知识库 |
+| `POST /api/ai/chat/references` | 会话引用溯源（按 conversationId 查回引用来源） |
 | `GET /api/ai/artifact/{id}` | Agent 产物在线预览 |
 | `POST /api/ai/agent/cancel` | 取消进行中的 Agent 任务（按 conversationId，服务端真正终止后续子任务） |
 | `WS /ws/ai?token=JWT` | WebSocket 通道（Agent 长任务，双向） |
 
 事件帧：`{"i":序号,"e":"msg.start|token|rag.sources|agent.step|artifact|msg.end|error","ts":..,"data":{..}}`
+
+### 链路追踪（TraceId）
+
+每个请求都有唯一链路 ID，贯穿网关 → AI 服务 → 平台服务：
+
+- **请求头**：`X-Trace-Id`（客户端可自带，否则由网关生成）
+- **响应头**：同名回写，前端控制台可直接看到
+- **响应体**：`R.traceId` 字段（含异常响应）
+- **日志**：MDC 已注入，格式 `[traceId] [thread] logger - msg`
+- **跨线程**：流式线程池、入库存档线程、WebSocket 任务、Feign 调用均已显式传递
+
+排查示例：拿一个 traceId，在三份日志里 grep 即可还原完整调用链。
 
 ## 五、遗留事项（可选增强，架构已就位）
 
@@ -195,10 +221,10 @@ spring.ai.mcp.client:
 3. **Nacos 配置迁移**：基础设施配置（超时/限流/开关）迁入 Nacos 热更新（`spring.config.import: optional:nacos:` 已就绪，standalone 模式下自动跳过）
 4. **Sentinel 规则持久化**：规则写入 Nacos DataSource
 5. **管理端更多页面**：模型管理 / 应用配置 / 用量看板（后端接口已具备，知识库管理页已完成）
-6. **RAG 引用落库**：目前引用通过 `rag.sources` 事件返回前端，刷新页面后不再回溯
-   （`ai_message_reference` 表尚未建立）
-7. **文档入库异步化**：当前上传后同步解析与向量化，大文件建议改为 `ai_ingest_task`
-   驱动 + 进度上报 + 失败重试
+6. **对象存储替换内存缓存**：入库的原始文件目前暂存在进程内 ConcurrentHashMap，
+   服务重启后无法重试（已在重试接口中给出明确提示），生产建议落 MinIO / OSS
+7. **Micrometer 指标**：QPS / 延迟 / Token 消耗曲线（TraceId 已就位，可直接挂 Observation）
+8. **API Key 认证**：当前只支持 JWT，对外提供能力需补 API Key 通道
 
 ## 六、安全红线（务必遵守）
 

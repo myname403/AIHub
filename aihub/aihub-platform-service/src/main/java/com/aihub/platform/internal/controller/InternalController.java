@@ -39,6 +39,12 @@ public class InternalController {
         return R.ok(quotaService.checkAndConsume(request));
     }
 
+    /** 多维批量扣减（M5）：一次调用扣 request + token 等多个维度 */
+    @PostMapping("/quota/consume")
+    public R<PlatformClient.QuotaResult> consume(@RequestBody PlatformClient.QuotaConsumeRequest request) {
+        return R.ok(quotaService.consume(request));
+    }
+
     @PostMapping("/usage/report")
     public R<Void> reportUsage(@RequestBody PlatformClient.UsageReport report) {
         quotaService.reportUsage(report);

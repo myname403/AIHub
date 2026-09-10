@@ -2,6 +2,7 @@ package com.aihub.ai.config;
 
 import com.aihub.api.config.FeignTenantConfig;
 import com.aihub.common.tenant.TenantResolveInterceptor;
+import com.aihub.common.trace.TraceIdInterceptor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
@@ -12,9 +13,10 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 /**
  * AI 服务 Web 配置：
- * 1) 租户解析拦截器（租户上下文唯一来源）
- * 2) Feign 租户透传（调用平台服务时携带租户头）
- * 3) 异步请求执行器（NDJSON StreamingResponseBody 需要，否则默认 SimpleAsyncTaskExecutor）
+ * 1) 链路追踪拦截器（全链路 TraceId，最先执行）
+ * 2) 租户解析拦截器（租户上下文唯一来源）
+ * 3) Feign 租户透传（调用平台服务时携带租户头）
+ * 4) 异步请求执行器（NDJSON StreamingResponseBody 需要，否则默认 SimpleAsyncTaskExecutor）
  */
 @Configuration
 @Import(FeignTenantConfig.class)
@@ -22,9 +24,14 @@ public class WebMvcConfig implements WebMvcConfigurer {
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
+        // order 越小越先执行：TraceId 必须先就绪，否则租户校验失败的日志里拿不到链路 ID
+        registry.addInterceptor(new TraceIdInterceptor())
+                .addPathPatterns("/**")
+                .order(0);
         registry.addInterceptor(new TenantResolveInterceptor())
                 .addPathPatterns("/**")
-                .excludePathPatterns("/actuator/**", "/error");
+                .excludePathPatterns("/actuator/**", "/error")
+                .order(1);
     }
 
     @Override

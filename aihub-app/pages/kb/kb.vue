@@ -16,7 +16,13 @@
           <text v-if="!docs[kb.id] || !docs[kb.id].length" class="empty">暂无文档</text>
           <view v-for="d in docs[kb.id] || []" :key="d.id" class="doc">
             <text class="doc-name">{{ d.name }}</text>
-            <text class="doc-status" :class="'s' + d.status">{{ statusText(d.status) }}</text>
+            <view class="doc-right">
+              <text class="doc-status" :class="'s' + d.status">{{ statusText(d.status) }}</text>
+              <text v-if="taskOf(d)" class="doc-progress">
+                {{ taskOf(d).progress }}%
+              </text>
+              <text v-if="d.status === 3" class="link retry" @click="retryIngest(d)">重试</text>
+            </view>
           </view>
         </view>
 
@@ -41,14 +47,30 @@ import { getToken } from '../../common/request.js'
 
 export default {
   data() {
-    return { kbs: [], docs: {}, newName: '', tip: '' }
+    return { kbs: [], docs: {}, tasks: {}, newName: '', tip: '', timers: {} }
   },
   onShow() {
     this.reload()
   },
+  onHide() {
+    this.clearTimers()
+  },
+  onUnload() {
+    this.clearTimers()
+  },
   methods: {
     header() {
       return { Authorization: 'Bearer ' + getToken(), 'Content-Type': 'application/json' }
+    },
+    /** 取某文档当前入库任务（用于展示进度） */
+    taskOf(doc) {
+      return this.tasks[doc.id] || null
+    },
+    clearTimers() {
+      Object.keys(this.timers).forEach((k) => {
+        clearInterval(this.timers[k])
+        delete this.timers[k]
+      })
     },
     reload() {
       uni.request({
@@ -109,13 +131,83 @@ export default {
             name: 'file',
             header: { Authorization: 'Bearer ' + getToken() },
             success(up) {
-              that.tip = '上传完成'
+              // 上传接口是异步提交：立即返回 taskId，需轮询进度
+              let taskId = null
+              try {
+                const body = JSON.parse(up.data)
+                taskId = body && body.data ? body.data.taskId : null
+              } catch (e) {
+                taskId = null
+              }
+              that.tip = taskId ? '已提交，正在处理…' : '上传失败'
               that.loadDocs(kbId)
+              if (taskId) {
+                that.pollIngest(kbId, taskId)
+              }
             },
             fail() {
               that.tip = '上传失败'
             }
           })
+        }
+      })
+    },
+    /** 轮询入库进度，终态时停止并刷新文档列表 */
+    pollIngest(kbId, taskId) {
+      const that = this
+      this.stopTimer('task-' + taskId)
+      this.timers['task-' + taskId] = setInterval(() => {
+        uni.request({
+          url: config.baseUrl + '/api/ai/kb/ingest/' + taskId,
+          method: 'GET',
+          header: that.header(),
+          success(res) {
+            const task = res.data && res.data.code === 0 ? res.data.data : null
+            if (!task) {
+              that.stopTimer('task-' + taskId)
+              return
+            }
+            that.tasks[task.docId] = task
+            if (task.status === 2) {
+              that.tip = '入库完成'
+              that.stopTimer('task-' + taskId)
+              that.loadDocs(kbId)
+            } else if (task.status === 3) {
+              that.tip = '入库失败：' + (task.errorMsg || '未知原因')
+              that.stopTimer('task-' + taskId)
+              that.loadDocs(kbId)
+            }
+          },
+          fail() {
+            that.stopTimer('task-' + taskId)
+          }
+        })
+      }, 1500)
+    },
+    stopTimer(key) {
+      if (this.timers[key]) {
+        clearInterval(this.timers[key])
+        delete this.timers[key]
+      }
+    },
+    /** 失败任务重试 */
+    retryIngest(doc) {
+      const that = this
+      const task = this.taskOf(doc)
+      if (!task) {
+        this.tip = '未找到入库任务记录'
+        return
+      }
+      uni.request({
+        url: config.baseUrl + '/api/ai/kb/ingest/' + task.id + '/retry',
+        method: 'POST',
+        header: this.header(),
+        success(res) {
+          const accepted = res.data && res.data.code === 0 && res.data.data && res.data.data.accepted
+          that.tip = accepted ? '已重新提交处理' : '无法重试（原始文件已释放，请重新上传）'
+          if (accepted) {
+            that.pollIngest(doc.kbId, task.id)
+          }
         }
       })
     },
@@ -178,12 +270,27 @@ export default {
 .doc-name {
   font-size: 26rpx;
 }
+.doc-right {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+}
+.doc-progress {
+  font-size: 22rpx;
+  color: #185fa5;
+}
+.link.retry {
+  font-size: 22rpx;
+}
 .doc-status {
   font-size: 22rpx;
   color: #0f6e56;
 }
 .doc-status.s3 {
   color: #a32d2d;
+}
+.doc-status.s1 {
+  color: #185fa5;
 }
 .empty {
   color: #b4b2a9;

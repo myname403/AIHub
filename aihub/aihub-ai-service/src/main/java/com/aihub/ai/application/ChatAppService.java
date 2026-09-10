@@ -4,19 +4,23 @@ import com.aihub.ai.domain.model.AgentNames;
 import com.aihub.ai.domain.model.AgentResult;
 import com.aihub.ai.domain.model.AgentTask;
 import com.aihub.ai.domain.model.ChatTurn;
+import com.aihub.ai.domain.model.MessageReference;
 import com.aihub.ai.domain.model.StreamEvent;
 import com.aihub.ai.domain.spi.Agent;
 import com.aihub.ai.domain.spi.AgentRegistry;
 import com.aihub.ai.domain.spi.ChatExecutor;
 import com.aihub.ai.domain.spi.ChatExecutor.StreamResult;
+import com.aihub.ai.domain.spi.MessageReferenceStore;
 import com.aihub.ai.domain.spi.StreamSink;
 import com.aihub.api.client.PlatformClient;
+import com.aihub.api.client.QuotaDimensions;
 import com.aihub.common.exception.BizException;
 import com.aihub.common.result.ResultCode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -35,16 +39,24 @@ public class ChatAppService {
     private final ChatExecutor chatExecutor;
     private final PlatformClient platformClient;
     private final AgentRegistry agentRegistry;
+    private final MessageReferenceStore messageReferenceStore;
 
     /** 同步对话 */
     public String chat(ChatTurn turn) {
         checkQuota(turn);
         if (SCENE_AGENT.equals(turn.scene())) {
+            consumeAgentTask(turn);
             return runAgent(turn, null);
         }
         StreamResult result = chatExecutor.call(turn);
         reportUsage(turn, result);
+        consumeTokens(turn, result);
         return result.content();
+    }
+
+    /** 会话引用溯源（历史回看）：按会话列出所有引用来源 */
+    public List<MessageReference> references(Long tenantId, String conversationId) {
+        return messageReferenceStore.list(tenantId, conversationId);
     }
 
     /** 流式对话：事件经 sink 回传；scene=agent 时走 Agent 规划链 */
@@ -54,11 +66,14 @@ public class ChatAppService {
                 return;
             }
             if (SCENE_AGENT.equals(turn.scene())) {
+                consumeAgentTask(turn);
                 String answer = runAgent(turn, sink);
                 reportUsage(turn, StreamResult.of(answer, "", 0L));
                 return;
             }
-            reportUsage(turn, chatExecutor.stream(turn, sink));
+            StreamResult result = chatExecutor.stream(turn, sink);
+            reportUsage(turn, result);
+            consumeTokens(turn, result);
         } catch (Exception e) {
             // 执行器已发出 error 事件并关闭 sink；此处仅记录，避免向上抛断开连接
             log.warn("流式对话结束（含失败）conv={}", turn.conversationId());
@@ -71,7 +86,8 @@ public class ChatAppService {
             var quotaResp = platformClient.checkAndConsume(
                     new PlatformClient.QuotaRequest(
                             UUID.randomUUID().toString(),
-                            turn.tenantId(), String.valueOf(turn.appId()), "request", 1));
+                            turn.tenantId(), String.valueOf(turn.appId()),
+                            QuotaDimensions.REQUEST, 1));
             PlatformClient.QuotaResult result = quotaResp == null ? null : quotaResp.getData();
             if (result == null) {
                 log.warn("配额响应为空（已降级放行）conv={}", turn.conversationId());
@@ -84,6 +100,39 @@ public class ChatAppService {
             throw e;
         } catch (Exception e) {
             log.warn("配额校验失败（已降级放行）conv={} err={}", turn.conversationId(), e.getMessage());
+        }
+    }
+
+    /**
+     * token 维度扣减（M5）：用量只有拿到模型响应后才知道，因此属<b>事后补扣</b>。
+     *
+     * <p>补扣失败只记日志：请求已经产生真实成本，不能因为统计失败而让用户看到错误。
+     * 用完 token 配额的下一次请求会在 checkQuota 阶段被拦下。
+     */
+    private void consumeTokens(ChatTurn turn, StreamResult result) {
+        int tokens = (result.tokenIn() == null ? 0 : result.tokenIn())
+                + (result.tokenOut() == null ? 0 : result.tokenOut());
+        if (tokens <= 0) {
+            return;
+        }
+        try {
+            platformClient.consume(new PlatformClient.QuotaConsumeRequest(
+                    UUID.randomUUID().toString(), turn.tenantId(), String.valueOf(turn.appId()),
+                    List.of(new PlatformClient.QuotaItem(QuotaDimensions.TOKEN, tokens))));
+        } catch (Exception e) {
+            log.warn("token 配额扣减失败（已降级）tenant={} tokens={} err={}",
+                    turn.tenantId(), tokens, e.getMessage());
+        }
+    }
+
+    /** Agent 任务维度扣减（M5）：task 维度用于限制 Agent 这类高成本调用 */
+    private void consumeAgentTask(ChatTurn turn) {
+        try {
+            platformClient.consume(new PlatformClient.QuotaConsumeRequest(
+                    UUID.randomUUID().toString(), turn.tenantId(), String.valueOf(turn.appId()),
+                    List.of(new PlatformClient.QuotaItem(QuotaDimensions.TASK, 1))));
+        } catch (Exception e) {
+            log.warn("task 配额扣减失败（已降级）tenant={} err={}", turn.tenantId(), e.getMessage());
         }
     }
 

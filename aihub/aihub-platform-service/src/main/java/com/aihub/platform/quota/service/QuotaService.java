@@ -1,6 +1,7 @@
 package com.aihub.platform.quota.service;
 
 import com.aihub.api.client.PlatformClient;
+import com.aihub.api.client.QuotaDimensions;
 import com.aihub.platform.quota.entity.AiQuotaPolicyDO;
 import com.aihub.platform.quota.entity.AiQuotaUsageDO;
 import com.aihub.platform.quota.entity.AiUsageRecordDO;
@@ -51,16 +52,70 @@ public class QuotaService {
     }
 
     public PlatformClient.QuotaResult checkAndConsume(PlatformClient.QuotaRequest request) {
-        String dimension = request.dimension() == null ? "request" : request.dimension();
+        String dimension = request.dimension() == null
+                ? QuotaDimensions.REQUEST : request.dimension();
         long amount = Math.max(request.amount(), 1);
+        return consume(new PlatformClient.QuotaConsumeRequest(
+                request.requestId(), request.tenantId(), request.appId(),
+                List.of(new PlatformClient.QuotaItem(dimension, amount))));
+    }
 
-        List<AiQuotaPolicyDO> policies = policyMapper.selectList(Wrappers.<AiQuotaPolicyDO>lambdaQuery()
-                .eq(AiQuotaPolicyDO::getTenantId, request.tenantId())
-                .eq(AiQuotaPolicyDO::getDimension, dimension));
-        if (policies.isEmpty()) {
-            return new PlatformClient.QuotaResult(true, Long.MAX_VALUE, "未配置配额策略，默认放行");
+    /**
+     * 多维批量扣减（M5）。
+     *
+     * <p>两阶段：先对全部维度试算（判断是否会超限），全部通过后才真正累加。
+     * 这样任一维度超限时不会留下「部分扣减」的脏用量。
+     */
+    public PlatformClient.QuotaResult consume(PlatformClient.QuotaConsumeRequest request) {
+        if (request == null || request.items() == null || request.items().isEmpty()) {
+            return new PlatformClient.QuotaResult(true, Long.MAX_VALUE, "无扣减项，默认放行");
         }
 
+        // 第一阶段：试算——逐维度取策略，判断 used + amount 是否越界
+        record Pending(String dimension, String periodKey, long amount) {
+        }
+        List<Pending> pending = new ArrayList<>();
+        for (PlatformClient.QuotaItem item : request.items()) {
+            String dimension = item.dimension() == null
+                    ? QuotaDimensions.REQUEST : item.dimension();
+            long amount = Math.max(item.amount(), 1);
+
+            List<AiQuotaPolicyDO> sorted = sortedPolicies(request.tenantId(), dimension);
+            if (sorted.isEmpty()) {
+                continue; // 该维度未配置策略 → 放行
+            }
+            for (AiQuotaPolicyDO policy : sorted) {
+                String periodKey = periodKey(policy.getPeriod());
+                Long used = currentUsed(request.tenantId(), dimension, periodKey);
+                long usedNow = used == null ? 0L : used;
+                if (usedNow + amount > policy.getLimitValue()) {
+                    log.warn("配额超限 tenant={} dim={} period={} used={} amount={} limit={}",
+                            request.tenantId(), dimension, periodKey, usedNow, amount,
+                            policy.getLimitValue());
+                    return new PlatformClient.QuotaResult(false,
+                            Math.max(policy.getLimitValue() - usedNow, 0),
+                            "维度 " + dimension + " 配额已用尽");
+                }
+                pending.add(new Pending(dimension, periodKey, amount));
+            }
+        }
+
+        // 第二阶段：全部通过，真正累加（口径为租户级，app_id = NULL）
+        for (Pending p : pending) {
+            usageMapper.upsertConsume(IdWorker.getId(), request.tenantId(),
+                    null, p.dimension(), p.periodKey(), p.amount());
+        }
+        return new PlatformClient.QuotaResult(true, 0, "ok");
+    }
+
+    /** 取某维度的策略并按 day 优先于 month 排序（详见下方注释） */
+    private List<AiQuotaPolicyDO> sortedPolicies(Long tenantId, String dimension) {
+        List<AiQuotaPolicyDO> policies = policyMapper.selectList(Wrappers.<AiQuotaPolicyDO>lambdaQuery()
+                .eq(AiQuotaPolicyDO::getTenantId, tenantId)
+                .eq(AiQuotaPolicyDO::getDimension, dimension));
+        if (policies.isEmpty()) {
+            return List.of();
+        }
         // day 优先于 month（更细粒度的先扣）。
         // 两个注意点：
         // ① 必须用 Comparator 而非手写三元比较——(a,b) -> a 是 day ? -1 : 1 不满足传递性，
@@ -69,24 +124,7 @@ public class QuotaService {
         //    原地 sort 会抛 UnsupportedOperationException。
         List<AiQuotaPolicyDO> sorted = new ArrayList<>(policies);
         sorted.sort(Comparator.comparing(p -> !"day".equalsIgnoreCase(p.getPeriod())));
-
-        for (AiQuotaPolicyDO policy : sorted) {
-            String periodKey = periodKey(policy.getPeriod());
-            // 口径说明：ai_quota_policy 目前是租户级（无 app_id 列），
-            // 因此用量也必须按租户级统计（app_id = NULL），否则会出现
-            // 「按应用累加、按租户查询」的口径错配。应用明细仍记在 ai_usage_record.app_id。
-            usageMapper.upsertConsume(IdWorker.getId(), request.tenantId(),
-                    null, dimension, periodKey, amount);
-
-            Long used = currentUsed(request.tenantId(), dimension, periodKey);
-            if (used != null && used > policy.getLimitValue()) {
-                log.warn("配额超限 tenant={} dim={} period={} used={} limit={}",
-                        request.tenantId(), dimension, periodKey, used, policy.getLimitValue());
-                return new PlatformClient.QuotaResult(false,
-                        Math.max(policy.getLimitValue() - used, 0), "配额已用尽");
-            }
-        }
-        return new PlatformClient.QuotaResult(true, 0, "ok");
+        return sorted;
     }
 
     public void reportUsage(PlatformClient.UsageReport report) {

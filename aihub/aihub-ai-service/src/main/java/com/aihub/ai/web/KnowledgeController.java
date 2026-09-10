@@ -2,6 +2,7 @@ package com.aihub.ai.web;
 
 import com.aihub.ai.application.KnowledgeAppService;
 import com.aihub.ai.domain.model.DocumentInfo;
+import com.aihub.ai.domain.model.IngestTask;
 import com.aihub.ai.domain.model.RetrievedChunk;
 import com.aihub.common.result.R;
 import com.aihub.common.tenant.TenantContext;
@@ -49,16 +50,21 @@ public class KnowledgeController {
         return R.ok(knowledgeAppService.listDocuments(TenantContext.requireTenantId(), kbId));
     }
 
-    /** 文档上传并入库（当前支持 txt / md） */
+    /**
+     * 文档上传并入库（异步）。
+     *
+     * <p>支持 txt / md / pdf / docx；立即返回 taskId，前端轮询
+     * {@code GET /api/ai/kb/ingest/{taskId}} 获取进度。
+     */
     @PostMapping("/{kbId}/documents")
     public R<Map<String, Object>> upload(@PathVariable Long kbId,
                                          @RequestParam("file") MultipartFile file) {
         try {
-            int chunks = knowledgeAppService.ingest(
+            Long taskId = knowledgeAppService.submitIngest(
                     TenantContext.requireTenantId(), kbId,
                     file.getOriginalFilename() == null ? "unnamed" : file.getOriginalFilename(),
                     file.getBytes());
-            return R.ok(Map.of("chunks", chunks));
+            return R.ok(Map.of("taskId", taskId));
         } catch (Exception e) {
             if (e instanceof com.aihub.common.exception.BizException biz) {
                 throw biz;
@@ -66,6 +72,22 @@ public class KnowledgeController {
             throw new com.aihub.common.exception.BizException(
                     com.aihub.common.result.ResultCode.SYSTEM_ERROR, "文件读取失败");
         }
+    }
+
+    /** 入库进度（前端轮询） */
+    @GetMapping("/ingest/{taskId}")
+    public R<IngestTask> ingestProgress(@PathVariable Long taskId) {
+        return knowledgeAppService.ingestProgress(TenantContext.requireTenantId(), taskId)
+                .map(R::ok)
+                .orElseGet(() -> R.fail(
+                        com.aihub.common.result.ResultCode.NOT_FOUND.getCode(), "入库任务不存在"));
+    }
+
+    /** 重试失败的入库任务 */
+    @PostMapping("/ingest/{taskId}/retry")
+    public R<Map<String, Object>> retryIngest(@PathVariable Long taskId) {
+        boolean accepted = knowledgeAppService.retryIngest(TenantContext.requireTenantId(), taskId);
+        return R.ok(Map.of("accepted", accepted));
     }
 
     /** 应用绑定知识库（绑定后对话自动走 RAG） */

@@ -5,6 +5,7 @@ import com.aihub.ai.domain.model.ChatTurn;
 import com.aihub.ai.domain.spi.StreamSink;
 import com.aihub.ai.web.sink.WsStreamSink;
 import com.aihub.common.security.JwtVerifier;
+import com.aihub.common.trace.TraceContext;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -78,14 +79,17 @@ public class AgentWebSocketHandler extends TextWebSocketHandler {
                     node.path("message").asText(""),
                     node.path("scene").asText("agent"));
 
-            executor.submit(() -> {
+            // 每个 WS 消息视为一条链路：先在本线程设置 traceId，再由 wrap 带到工作线程
+            TraceContext.set(TraceContext.newTraceId());
+            executor.submit(TraceContext.wrap(() -> {
                 StreamSink sink = new WsStreamSink(session);
                 try {
                     chatAppService.chatStream(turn, sink);
                 } catch (Exception e) {
                     log.warn("WS 任务结束（含失败）conv={}", turn.conversationId());
                 }
-            });
+            }));
+            TraceContext.clear();
         } catch (Exception e) {
             log.warn("WS 消息处理失败: {}", e.getMessage());
         }

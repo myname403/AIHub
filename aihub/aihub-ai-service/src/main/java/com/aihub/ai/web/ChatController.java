@@ -8,6 +8,7 @@ import com.aihub.ai.web.sink.NdjsonStreamSink;
 import com.aihub.ai.web.sink.SseStreamSink;
 import com.aihub.common.result.R;
 import com.aihub.common.tenant.TenantContext;
+import com.aihub.common.trace.TraceContext;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import lombok.Data;
@@ -27,6 +28,7 @@ import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBo
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
@@ -78,7 +80,8 @@ public class ChatController {
     public SseEmitter chatSse(@Valid @RequestBody ChatRequest request) {
         SseEmitter emitter = new SseEmitter(120_000L);
         ChatTurn turn = turn(request);
-        streamExecutor.submit(() -> {
+        // 流式任务在独立线程执行：必须把链路 ID 带过去，否则日志断链
+        streamExecutor.submit(TraceContext.wrap(() -> {
             StreamSink sink = new SseStreamSink(emitter);
             try {
                 chatAppService.chatStream(turn, sink);
@@ -86,7 +89,7 @@ public class ChatController {
                 sink.emit(StreamEvent.error(9999, "50000", "服务异常"));
                 sink.close();
             }
-        });
+        }));
         return emitter;
     }
 
@@ -95,14 +98,19 @@ public class ChatController {
     @PostMapping(value = "/chat/ndjson", produces = "application/x-ndjson")
     public ResponseEntity<StreamingResponseBody> chatNdjson(@Valid @RequestBody ChatRequest request) {
         ChatTurn turn = turn(request);
+        // StreamingResponseBody 由 Spring MVC 异步执行器运行，同样跨线程，需带上链路 ID
+        String traceId = TraceContext.ensure();
 
         StreamingResponseBody body = (OutputStream out) -> {
+            TraceContext.set(traceId);
             StreamSink sink = new NdjsonStreamSink(out);
             try {
                 chatAppService.chatStream(turn, sink);
             } catch (Exception e) {
                 sink.emit(StreamEvent.error(9999, "50000", "服务异常"));
                 sink.close();
+            } finally {
+                TraceContext.clear();
             }
         };
 
@@ -113,6 +121,32 @@ public class ChatController {
         headers.set("X-Accel-Buffering", "no");
         headers.set(HttpHeaders.CACHE_CONTROL, "no-cache, no-transform");
         return new ResponseEntity<>(body, headers, HttpStatus.OK);
+    }
+
+    /* ---------------- 引用溯源 ---------------- */
+
+    /** 会话引用溯源：返回该会话所有回答的引用来源（历史回看用） */
+    @PostMapping("/chat/references")
+    public R<List<Map<String, Object>>> references(@RequestBody ReferenceRequest request) {
+        if (request == null || request.getConversationId() == null
+                || request.getConversationId().isBlank()) {
+            return R.ok(List.of());
+        }
+        Long tenantId = TenantContext.requireTenantId();
+        List<Map<String, Object>> data = chatAppService
+                .references(tenantId, request.getConversationId()).stream()
+                .map(ref -> {
+                    Map<String, Object> item = new HashMap<>();
+                    item.put("seq", ref.seq());
+                    item.put("kbId", ref.kbId() == null ? 0L : ref.kbId());
+                    item.put("docId", ref.docId() == null ? 0L : ref.docId());
+                    item.put("docName", ref.docName() == null ? "" : ref.docName());
+                    item.put("score", ref.score());
+                    item.put("content", ref.content() == null ? "" : ref.content());
+                    return item;
+                })
+                .toList();
+        return R.ok(data);
     }
 
     /* ---------------- 私有 ---------------- */
@@ -141,5 +175,12 @@ public class ChatController {
         private String message;
         /** 场景：chat / rag（M1 固定 chat） */
         private String scene;
+    }
+
+    @Data
+    public static class ReferenceRequest {
+        /** 会话 ID */
+        @NotBlank(message = "会话 ID 不能为空")
+        private String conversationId;
     }
 }

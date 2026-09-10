@@ -18,6 +18,11 @@ import java.util.List;
  *
  * <p>会话键格式固定为 {@code t{tenantId}:{conversationId}}，
  * 租户隔离由键本身保证；窗口策略在本层实现。
+ *
+ * <p><b>会话 ID 是字符串</b>（前端生成，形如 {@code a3f2c1e09b8d4a7f}），
+ * 原实现把非数字 ID 一律退化成 {@code 0L} 写入 BIGINT 列，
+ * 导致同一租户下所有会话的历史被混写在同一份记忆里。
+ * 现改为原样透传给 {@link ConversationMemoryStore}，由 conv_key 列承载。
  */
 @Component
 @RequiredArgsConstructor
@@ -30,20 +35,20 @@ public class DbChatMemory implements ChatMemory {
     private int windowSize;
 
     public static String key(Long tenantId, String conversationId) {
-        return "t" + tenantId + ":" + conversationId;
+        return "t" + tenantId + ":" + (conversationId == null ? "" : conversationId);
     }
 
     @Override
     public void add(String conversationId, List<Message> messages) {
         Long tenantId = tenantOf(conversationId);
-        Long convId = convOf(conversationId);
+        String convId = convOf(conversationId);
         List<ChatMessage> toSave = new ArrayList<>();
         for (Message message : messages) {
             String role = roleOf(message);
             if (role == null) {
                 continue; // 系统提示词不作为记忆持久化
             }
-            toSave.add(new ChatMessage(role, message.getText()));
+            toSave.add(ChatMessage.of(role, message.getText()));
         }
         if (!toSave.isEmpty()) {
             store.append(tenantId, convId, toSave);
@@ -53,7 +58,7 @@ public class DbChatMemory implements ChatMemory {
     @Override
     public List<Message> get(String conversationId) {
         Long tenantId = tenantOf(conversationId);
-        Long convId = convOf(conversationId);
+        String convId = convOf(conversationId);
         List<ChatMessage> history = store.history(tenantId, convId);
         int from = Math.max(0, history.size() - Math.max(windowSize, 1));
         List<Message> messages = new ArrayList<>();
@@ -82,16 +87,18 @@ public class DbChatMemory implements ChatMemory {
 
     private Long tenantOf(String key) {
         int end = key.indexOf(':');
+        if (end <= 1) {
+            throw new IllegalArgumentException("非法会话键：" + key);
+        }
         return Long.parseLong(key.substring(1, end));
     }
 
-    private Long convOf(String key) {
+    /** 会话 ID 原样返回，不再做数字退化；键缺省会话 ID 时返回空串 */
+    private String convOf(String key) {
         int end = key.indexOf(':');
-        try {
-            return Long.parseLong(key.substring(end + 1));
-        } catch (NumberFormatException e) {
-            // 非数字会话 ID 时退化为 0，仅用于分组
-            return 0L;
+        if (end < 0) {
+            return key;
         }
+        return end == key.length() - 1 ? "" : key.substring(end + 1);
     }
 }

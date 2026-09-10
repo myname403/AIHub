@@ -1,11 +1,13 @@
 package com.aihub.ai.infra.ai;
 
 import com.aihub.ai.domain.model.ChatTurn;
+import com.aihub.ai.domain.model.MessageReference;
 import com.aihub.ai.domain.model.RetrievedChunk;
 import com.aihub.ai.domain.model.StreamEvent;
 import com.aihub.ai.domain.spi.AppRepository;
 import com.aihub.ai.domain.spi.ChatExecutor;
 import com.aihub.ai.domain.spi.KnowledgeRetriever;
+import com.aihub.ai.domain.spi.MessageReferenceStore;
 import com.aihub.ai.domain.spi.StreamSink;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -35,6 +37,7 @@ public class SpringAiChatExecutor implements ChatExecutor {
     private final ChatClientFactory chatClientFactory;
     private final AppRepository appRepository;
     private final KnowledgeRetriever knowledgeRetriever;
+    private final MessageReferenceStore referenceStore;
 
     @Value("${aihub.rag.top-k:4}")
     private int ragTopK;
@@ -48,9 +51,9 @@ public class SpringAiChatExecutor implements ChatExecutor {
         long start = System.currentTimeMillis();
         try {
             ChatClient client = chatClientFactory.create(turn.tenantId(), turn.appId(), turn.scene());
-            String promptText = augment(turn, null, new int[]{0});
+            Augmented augmented = augment(turn, null, new int[]{0});
             org.springframework.ai.chat.model.ChatResponse response = client.prompt()
-                    .user(promptText)
+                    .user(augmented.prompt())
                     .advisors(a -> a.param(ChatMemory.CONVERSATION_ID,
                                     DbChatMemory.key(turn.tenantId(), turn.conversationId()))
                             .param(AuditAdvisor.CTX_TENANT, turn.tenantId())
@@ -61,6 +64,7 @@ public class SpringAiChatExecutor implements ChatExecutor {
             long cost = System.currentTimeMillis() - start;
             String content = response == null || response.getResult() == null
                     ? "" : response.getResult().getOutput().getText();
+            referenceStore.save(turn.tenantId(), turn.conversationId(), augmented.references());
             return new StreamResult(content == null ? "" : content,
                     chatClientFactory.resolvedModelCode(turn.tenantId(), turn.appId(), turn.scene()),
                     cost, tokenOf(response, true), tokenOf(response, false));
@@ -93,13 +97,13 @@ public class SpringAiChatExecutor implements ChatExecutor {
                 Map.of("conversationId", turn.conversationId())));
 
         // RAG：检索 + 注入 + 引用事件（在 msg.start 之后、token 之前发出）
-        String promptText = augment(turn, sink, index);
+        Augmented augmented = augment(turn, sink, index);
 
         // 流式最后一个 ChatResponse 携带 usage，用作本次调用的 token 统计依据
         final org.springframework.ai.chat.model.ChatResponse[] last = {null};
         try {
             client.prompt()
-                    .user(promptText)
+                    .user(augmented.prompt())
                     .advisors(a -> a.param(ChatMemory.CONVERSATION_ID, memoryKey)
                             .param(AuditAdvisor.CTX_TENANT, turn.tenantId())
                             .param(AuditAdvisor.CTX_APP, turn.appId())
@@ -122,6 +126,8 @@ public class SpringAiChatExecutor implements ChatExecutor {
             long cost = System.currentTimeMillis() - start;
             String modelCode = chatClientFactory.resolvedModelCode(
                     turn.tenantId(), turn.appId(), turn.scene());
+            // 记忆 Advisor 已在流结束时把助手消息落库，此刻才能把引用挂到该消息上
+            referenceStore.save(turn.tenantId(), turn.conversationId(), augmented.references());
             sink.emit(StreamEvent.end(index[0]++, cost, modelCode));
             return new StreamResult(content.toString(), modelCode, cost,
                     tokenOf(last[0], true), tokenOf(last[0], false));
@@ -139,15 +145,16 @@ public class SpringAiChatExecutor implements ChatExecutor {
 
     /**
      * RAG 增强：检索知识库 → 拼装受限上下文 → 发出 rag.sources 事件。
-     * 未绑定知识库或未命中时返回原始问题。
+     * 未绑定知识库或未命中时返回原始问题、引用列表为空。
      */
-    private String augment(ChatTurn turn, StreamSink sink, int[] index) {
+    private Augmented augment(ChatTurn turn, StreamSink sink, int[] index) {
         try {
             List<Long> kbIds = appRepository.knowledgeBaseIds(turn.tenantId(), turn.appId());
             if (kbIds == null || kbIds.isEmpty()) {
-                return turn.userText();
+                return Augmented.plain(turn.userText());
             }
             List<Map<String, Object>> sources = new ArrayList<>();
+            List<MessageReference> references = new ArrayList<>();
             StringBuilder context = new StringBuilder();
             int ref = 1;
             for (Long kbId : kbIds) {
@@ -157,28 +164,37 @@ public class SpringAiChatExecutor implements ChatExecutor {
                     context.append('[').append(ref).append("] ")
                             .append(chunk.content()).append("\n\n");
                     sources.add(Map.of(
-                            "index", ref++,
+                            "index", ref,
                             "kbId", chunk.kbId() == null ? 0L : chunk.kbId(),
                             "docId", chunk.docId() == null ? 0L : chunk.docId(),
                             "docName", StringUtils.hasText(chunk.docName()) ? chunk.docName() : "",
                             "score", chunk.score()));
+                    references.add(MessageReference.of(ref, chunk));
+                    ref++;
                 }
             }
             if (sources.isEmpty()) {
-                return turn.userText();
+                return Augmented.plain(turn.userText());
             }
             if (sink != null) {
                 sink.emit(StreamEvent.of(index[0]++, StreamEvent.RAG_SOURCES, Map.of("sources", sources)));
             }
             // 防幻觉约束（源自课程天机助手提示词）：只依据知识库内容作答
-            return "请仅依据下方知识库内容回答用户问题；"
+            return new Augmented("请仅依据下方知识库内容回答用户问题；"
                     + "若内容不足以回答，请明确说明未检索到相关信息，禁止编造。"
                     + "回答末尾以 [n] 标注引用来源。\n\n"
                     + "【知识库内容】\n" + context
-                    + "\n【用户问题】\n" + turn.userText();
+                    + "\n【用户问题】\n" + turn.userText(), references);
         } catch (Exception e) {
             log.warn("RAG 检索失败，退回普通对话 conv={}", turn.conversationId(), e);
-            return turn.userText();
+            return Augmented.plain(turn.userText());
+        }
+    }
+
+    /** RAG 增强结果：注入模型的提示词 + 本次命中的引用来源 */
+    private record Augmented(String prompt, List<MessageReference> references) {
+        static Augmented plain(String prompt) {
+            return new Augmented(prompt, List.of());
         }
     }
 }

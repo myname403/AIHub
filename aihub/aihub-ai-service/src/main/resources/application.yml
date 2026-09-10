@@ -101,6 +101,8 @@ aihub:
     similarity-threshold: 0.6
     chunk-size: 500
     chunk-overlap: 100
+    # 入库失败自动重试次数上限（指数退避，耗尽后任务落 failed，可手动重试）
+    ingest-max-retry: 2
   # 会话记忆窗口
   memory:
     window-size: 20
@@ -130,3 +132,6 @@ management:
 logging:
   level:
     com.aihub: info
+  # 链路追踪：traceId 由 TraceContext 写入 MDC，日志自动携带（无链路时为 -）
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%X{traceId:--}] [%thread] %logger{36} - %msg%n"
