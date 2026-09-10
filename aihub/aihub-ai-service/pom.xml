@@ -52,6 +52,12 @@
             <groupId>org.flywaydb</groupId>
             <artifactId>flyway-mysql</artifactId>
         </dependency>
+        <!-- 对象存储（可选）：aihub.storage.type=minio 时启用 S3 协议入库文件暂存（8.x 最终稳定版） -->
+        <dependency>
+            <groupId>io.minio</groupId>
+            <artifactId>minio</artifactId>
+            <version>8.5.17</version>
+        </dependency>
 
         <!-- Spring AI（M1 起使用；版本见父工程 spring-ai.version） -->
         <dependency>

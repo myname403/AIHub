@@ -123,8 +123,18 @@ aihub:
     chunk-overlap: 100
     # 入库失败自动重试次数上限（指数退避，耗尽后任务落 failed，可手动重试）
     ingest-max-retry: 2
-    # 入库原始文件暂存目录（失败任务靠它重试；生产多实例部署应换 MinIO / OSS）
+    # 入库原始文件暂存目录（失败任务靠它重试；local 后端专用，
+    # 多实例部署改用 aihub.storage.type=minio，见下方 storage 块）
     ingest-file-dir: ${AIHUB_INGEST_DIR:.aihub/ingest}
+  # 入库原始文件的存储后端：local=本地磁盘（默认，单机）；
+  # minio=S3 协议对象存储（多实例共享，失败重试不再挑节点；桶不存在会自动创建）
+  storage:
+    type: ${AIHUB_STORAGE_TYPE:local}
+    minio:
+      endpoint: ${AIHUB_MINIO_ENDPOINT:http://127.0.0.1:9000}
+      access-key: ${AIHUB_MINIO_ACCESS_KEY:aihub}
+      secret-key: ${AIHUB_MINIO_SECRET_KEY:aihub12345}
+      bucket: ${AIHUB_MINIO_BUCKET:aihub-ingest}
   # 会话记忆窗口
   memory:
     window-size: 20

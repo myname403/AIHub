@@ -58,11 +58,11 @@
 
 ```bash
 cd aihub
-docker compose up -d      # MySQL(两库) + Redis Stack + Nacos 3.0.3 + Sentinel Dashboard
+docker compose up -d      # MySQL(两库) + Redis Stack + Nacos 3.0.3 + Sentinel Dashboard + MinIO(可选)
 docker compose ps         # 全部 healthy
 ```
 
-- Nacos 控制台：<http://127.0.0.1:8848/index.html>；Sentinel：<http://127.0.0.1:8858>
+- Nacos 控制台：<http://127.0.0.1:8848/index.html>；Sentinel：<http://127.0.0.1:8858>；MinIO：<http://127.0.0.1:9001>（aihub / aihub12345，多实例部署才需要）
 - ⚠️ Redis 健康检查断言 `MODULE LIST` 含 `search`——**普通 Redis 没有向量能力**
 
 **方式 B：免 Docker 单机模式（standalone）**
@@ -357,6 +357,30 @@ Nacos → Sentinel 内存（启动与变更时拉取）；dashboard 上的手改
 重启即失——要把调好的规则持久化，最终落点是 Nacos 的 data-id。
 单机模式未启动 Nacos 时，规则拉取失败只打 WARN 日志，不阻断启动。
 
+### 3.11 入库文件对象存储（MinIO，多实例部署用）
+
+入库原始文件默认存本地磁盘（`aihub.rag.ingest-file-dir`），单机部署零依赖。
+**多实例部署**时各节点本地盘不共享，失败重试的请求若落到另一台机器就读不到文件——
+把后端切到 MinIO / 任意 S3 兼容存储即可，**业务代码零改动**
+（domain SPI `IngestFileStore` 两套实现，`aihub.storage.type` 一个开关切换）：
+
+```bash
+# 1) 拉起 MinIO（compose 已含）
+docker compose up -d minio        # S3 API :9000 / 控制台 :9001（aihub / aihub12345）
+
+# 2) 切换后端（其余参数见 aihub.storage.minio.*：endpoint / 密钥 / 桶名）
+set AIHUB_STORAGE_TYPE=minio      # 不配置即保持 local，standalone 模式不受影响
+```
+
+实现要点：
+- 对象键与本地目录布局一致（`{tenantId}/{docId}.bin`），MinIO 控制台排查能对上；
+- 桶**懒初始化**：首次存取时确认/创建；bean 创建期不做网络 IO，
+  没有 MinIO 服务也照常启动、照常跑测试；
+- 异常语义与本地实现完全一致：暂存/清理失败只记日志不阻断主流程，
+  读不到 → 任务落 failed 提示重新上传；
+- 未知后端值（如打错字 `miniio`）启动期 fail-fast，**绝不静默回落本地盘**
+  ——那会让多实例部署悄悄退化成各存各的。
+
 ## 四、接口速查（经网关，需 Bearer Token）
 
 | 接口 | 说明 |
@@ -433,16 +457,15 @@ curl -X POST http://127.0.0.1:8080/api/ai/chat \
 
 ## 五、遗留事项（可选增强，架构已就位）
 
-1. **对象存储替换本地磁盘**：入库原始文件当前落在 `{AIHUB_INGEST_DIR}/{tenantId}/{docId}.bin`
-   （临时文件 + 原子改名写入），**服务重启后仍可重试**；多实例部署时因各节点本地盘不共享，
-   重试可能落到没有该文件的节点——生产建议换 MinIO / OSS
-2. **指标接入可视化**：Micrometer 已埋点并暴露 `/actuator/prometheus`，接 Prometheus + Grafana 即可出图
-3. **MCP Server 的多租户与鉴权**：当前 SSE 通道自身不做鉴权（鉴权在它背后的开放 API 上），
+1. **指标接入可视化**：Micrometer 已埋点并暴露 `/actuator/prometheus`，接 Prometheus + Grafana 即可出图
+2. **MCP Server 的多租户与鉴权**：当前 SSE 通道自身不做鉴权（鉴权在它背后的开放 API 上），
    默认只绑 `127.0.0.1`；若要跨机暴露，需在前面加一层带鉴权的反向代理
-4. **MCP Server 的 streamable-http 传输**：`spring.ai.mcp.server.protocol` 已支持
+3. **MCP Server 的 streamable-http 传输**：`spring.ai.mcp.server.protocol` 已支持
    `streamable` / `stateless`，需要时改配置即可，工具实现不用动
 
-> 已完成（原遗留事项）：**Nacos 配置迁移**（热更新参数收拢为 `@ConfigurationProperties`，
+> 已完成（原遗留事项）：**对象存储替换本地磁盘**（MinIO / S3 实现，`aihub.storage.type`
+> 一键切换，业务代码零改动，见 3.11）、
+> **Nacos 配置迁移**（热更新参数收拢为 `@ConfigurationProperties`，
 > 模板见 `docs/nacos/`，见 3.10）、
 > **Sentinel 规则持久化**（规则写入 Nacos DataSource，样例见 `docs/nacos/`，见 3.10）、
 > **浏览器控制 Agent**（未接 Playwright MCP，改为裸 CDP 直连

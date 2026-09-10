@@ -2,8 +2,6 @@ package com.aihub.ai.infra.storage;
 
 import com.aihub.ai.domain.spi.IngestFileStore;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -22,17 +20,20 @@ import java.util.Optional;
  * 保证 {@link #load} 读到的要么是完整内容、要么什么都没有。
  *
  * <p>已知限制：本实现面向单机部署。多实例部署时各节点的本地盘不共享，
- * 重试请求若落到另一台机器会读不到文件——那时应换 MinIO / OSS 实现。
+ * 重试请求若落到另一台机器会读不到文件——此时把 {@code aihub.storage.type}
+ * 切到 {@code minio} 即可（见 {@link StorageConfiguration}），业务代码零改动。
+ *
+ * <p>注册在 {@link StorageConfiguration} 里按开关装配（不再是 @Component），
+ * 目录键 {@code aihub.rag.ingest-file-dir} 保持不变。
  */
 @Slf4j
-@Component
 public class LocalIngestFileStore implements IngestFileStore {
 
     private static final String SUFFIX = ".bin";
 
     private final Path baseDir;
 
-    public LocalIngestFileStore(@Value("${aihub.rag.ingest-file-dir:.aihub/ingest}") String baseDir) {
+    public LocalIngestFileStore(String baseDir) {
         this.baseDir = Paths.get(baseDir).toAbsolutePath().normalize();
         try {
             Files.createDirectories(this.baseDir);

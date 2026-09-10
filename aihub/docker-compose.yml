@@ -86,7 +86,29 @@ services:
       timeout: 5s
       retries: 15
 
+  minio:
+    # 可选：aihub.storage.type=minio 时才需要（入库原始文件多实例共享）。
+    # 用 latest 保证可得；生产请固定到具体 RELEASE tag
+    image: minio/minio:latest
+    container_name: aihub-minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # 控制台（浏览器打开，账号见 MINIO_ROOT_USER）
+    environment:
+      MINIO_ROOT_USER: aihub
+      MINIO_ROOT_PASSWORD: aihub12345
+      TZ: Asia/Shanghai
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:9000/minio/health/live >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+
 volumes:
   mysql-data:
   redis-data:
   nacos-data:
+  minio-data:
