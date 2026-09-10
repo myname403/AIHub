@@ -1,0 +1,68 @@
+## ============================================================================
+## aihub-mcp-stdio —— MCP Server（stdio 传输）
+##
+## ★ 这个进程的 stdout 就是 MCP 的 JSON-RPC 通道，任何非 JSON 输出都会让客户端
+##   解析失败（现象是「一连上就崩」，且报错毫无指向性）。因此本文件里有两处
+##   专门为此服务的配置：banner-mode 和日志（见 resources/logback-spring.xml）。
+## ============================================================================
+
+spring:
+  application:
+    name: aihub-mcp-stdio
+  main:
+    # ★ Spring Boot 的 banner 默认往 System.out 打印一串 ASCII 图，
+    #   足以让客户端的第一条 JSON-RPC 响应解析失败。必须关掉。
+    banner-mode: "off"
+    # 进程里不该有 HTTP 服务器（本模块 classpath 上也没有 servlet 容器，
+    # 这里显式声明是防止日后有人加了 web 依赖把这个 CLI 工具变成半吊子 Web 应用）。
+    web-application-type: none
+  # 本进程不需要注册中心/配置中心，也不需要数据库：它是个被宿主进程按需拉起的
+  # 短生命周期 CLI。注意本模块的 classpath 上确实没有 Nacos / JDBC 依赖
+  # （见 pom.xml），所以这里也不需要写 enabled:false 之类的开关。
+  ai:
+    mcp:
+      server:
+        enabled: true
+        # 我们用的是 Spring AI 原生的 @Tool + ToolCallbackProvider 路线（见 AiHubMcpConfiguration），
+        # 不用 @McpTool 那套注解。若不关，starter 里的 mcp-annotations 库会在启动时扫描全类路径
+        # 找 @McpTool 方法，找不到就抛一条 "No tool methods found in the provided tool objects: []"
+        # 的 WARN —— 纯噪音，而且会让人误以为「工具没注册上」。
+        annotation-scanner:
+          enabled: false
+        # ★★ 这是 stdio 传输的开关：McpServerStdioDisabledCondition 判定
+        #    spring.ai.mcp.server.stdio 缺失或 false 时，走的是「有 HTTP 端点」的那套装配。
+        #    stdio 模式必须显式设为 true。
+        stdio: true
+        name: aihub
+        version: 1.0.0
+        instructions: >-
+          AIHub 通用 AI 能力中台。可用工具：列出应用(aihub_list_applications)、
+          列出知识库(aihub_list_knowledge_bases)、检索知识库(aihub_search_knowledge)、
+          向指定应用提问(aihub_ask)。用户问「有哪些应用/知识库」时直接用对应工具，
+          不要凭猜测回答；需要基于企业文档回答时先检索再作答。
+        type: sync
+        # ★ 必须大于 aihub.mcp.timeout(HTTP 调用上游的超时)，否则上游慢查询会先被
+        #   MCP 层掐断，日志里只看到「MCP 请求超时」，完全指不到 HTTP 那一层。
+        #   宿主进程（Claude Desktop 等）通常给 60s 的工具调用上限，70s 在它之下。
+        request-timeout: ${MCP_REQUEST_TIMEOUT:70s}
+        capabilities:
+          # 只提供工具，按实际能力上报。
+          tool: true
+          prompt: false
+          resource: false
+          completion: false
+        tool-change-notification: false
+        prompt-change-notification: false
+        resource-change-notification: false
+
+aihub:
+  mcp:
+    # 上游 AIHub 网关地址。stdio 版通常与网关同机部署，默认走本机。
+    base-url: ${AIHUB_BASE_URL:http://127.0.0.1:8080}
+    # 开放 API Key（网关 X-API-Key）。宿主进程（如 Claude Desktop）通过 env 注入：
+    #   "env": { "AIHUB_API_KEY": "ak_xxx", "AIHUB_BASE_URL": "http://127.0.0.1:8080" }
+    api-key: ${AIHUB_API_KEY:}
+    timeout: ${AIHUB_HTTP_TIMEOUT:60s}
+    default-app-id: ${AIHUB_DEFAULT_APP_ID:}
+    default-top-k: 5
+    chunk-max-chars: 800

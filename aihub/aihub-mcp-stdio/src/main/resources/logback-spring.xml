@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  stdio 传输专用日志配置。
+
+  ★ 为什么不能用 Spring Boot 默认配置：
+  stdio 方式下 stdout 就是 MCP 的 JSON-RPC 通道。默认 ConsoleAppender 往 System.out 写，
+  启动时几条 INFO 日志就会插进 JSON-RPC 流里，客户端解析直接失败——
+  表现为「MCP Server 一连上就崩」，而且错误信息毫无指向性，非常难查。
+
+  因此这里做两件事：
+    1. ConsoleAppender 的 target 指向 System.err（诊断信息仍然可见，但走另一条管道）；
+    2. 同时落一份文件，方便事后排查。
+
+  另外 root 级别设为 WARN：宿主进程通常只给很小的 stderr 缓冲，
+  一堆 INFO 刷出去可能把管道写满而阻塞。
+-->
+<configuration>
+
+    <property name="LOG_DIR" value="${LOG_DIR:-${java.io.tmpdir}/aihub-mcp-stdio}"/>
+
+    <appender name="STDERR" class="ch.qos.logback.core.ConsoleAppender">
+        <target>System.err</target>
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+    </appender>
+
+    <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_DIR}/aihub-mcp-stdio.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.FixedWindowRollingPolicy">
+            <fileNamePattern>${LOG_DIR}/aihub-mcp-stdio.%i.log</fileNamePattern>
+            <minIndex>1</minIndex>
+            <maxIndex>3</maxIndex>
+        </rollingPolicy>
+        <triggeringPolicy class="ch.qos.logback.core.rolling.SizeBasedTriggeringPolicy">
+            <maxFileSize>5MB</maxFileSize>
+        </triggeringPolicy>
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+    </appender>
+
+    <!-- 本项目的包保留 INFO，方便排查工具调用；其余框架降到 WARN 免得刷屏 -->
+    <logger name="com.aihub.mcp" level="INFO"/>
+
+    <root level="WARN">
+        <appender-ref ref="STDERR"/>
+        <appender-ref ref="FILE"/>
+    </root>
+</configuration>

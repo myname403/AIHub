@@ -24,6 +24,14 @@
         <module>aihub-gateway</module>
         <module>aihub-platform-service</module>
         <module>aihub-ai-service</module>
+        <!-- MCP Server：工具实现与传输层分离（ADR-3）
+             同一套 @Tool 实现，由两个传输模块复用：
+               aihub-mcp-service 工具的纯业务实现（协议无关，可单测）
+               aihub-mcp-sse     以 SSE 对外提供在线服务
+               aihub-mcp-stdio   打成可执行 jar，由宿主进程以 stdio 拉起 -->
+        <module>aihub-mcp-service</module>
+        <module>aihub-mcp-sse</module>
+        <module>aihub-mcp-stdio</module>
     </modules>
 
     <properties>
@@ -85,6 +93,11 @@
             <dependency>
                 <groupId>com.aihub</groupId>
                 <artifactId>aihub-api</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.aihub</groupId>
+                <artifactId>aihub-mcp-service</artifactId>
                 <version>${project.version}</version>
             </dependency>
 

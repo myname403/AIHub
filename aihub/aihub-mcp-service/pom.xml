@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>com.aihub</groupId>
+        <artifactId>aihub-parent</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>aihub-mcp-service</artifactId>
+    <name>aihub-mcp-service</name>
+    <description>MCP 工具的业务实现（与传输协议无关，可单测）</description>
+
+    <dependencies>
+        <!-- 刻意【不】依赖 aihub-common：它带 spring-boot-starter-web，
+             会把整个 servlet 容器拖进 classpath。而 stdio 版是被 `java -jar` 拉起的
+             CLI 进程，容器在那儿纯属负担，还会逼着 stdio 模块显式关掉 web 环境。
+             本模块只需要「发 HTTP + 解 JSON」，因此按最小集声明依赖。 -->
+
+        <!-- 仅取 @Tool / MethodToolCallbackProvider；不引任何传输层 starter，
+             MCP 协议依赖由 sse / stdio 两个模块各自引入，本模块保持协议无关。 -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-model</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-web</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

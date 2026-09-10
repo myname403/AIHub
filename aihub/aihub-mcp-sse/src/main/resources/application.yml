@@ -1,0 +1,83 @@
+server:
+  # 8090 避开网关(8080)/平台(8081)/AI 服务(8082)
+  port: ${MCP_SSE_PORT:8090}
+  # ★ 默认只绑回环地址。MCP 工具能读写业务数据（列应用、检索知识库、发起对话），
+  #   而这条 SSE 通道自身不做鉴权（鉴权在它背后的 AIHub 开放 API 上，用 X-API-Key）。
+  #   对外暴露前请自行加上反向代理 + 鉴权，或显式改成 0.0.0.0 并确认网络边界可控。
+  address: ${MCP_SSE_ADDRESS:127.0.0.1}
+
+spring:
+  application:
+    name: aihub-mcp-sse
+  main:
+    # 保留 banner（这是个 Web 服务，stdout 不是协议通道）；如需静默可置 off
+    banner-mode: console
+  ai:
+    mcp:
+      server:
+        enabled: true
+        # 我们用的是 Spring AI 原生的 @Tool + ToolCallbackProvider 路线（见 AiHubMcpConfiguration），
+        # 不用 @McpTool 那套注解。若不关，starter 里的 mcp-annotations 库会在启动时扫描全类路径
+        # 找 @McpTool 方法，找不到就抛一条 "No tool methods found" WARN —— 纯噪音，且会让人
+        # 误以为「工具没注册上」。关掉它既省一次扫描，也让启动日志干净可信。
+        annotation-scanner:
+          enabled: false
+        # 传输协议：sse（默认）| streamable | stateless
+        # 条件类 EnabledSseServerCondition.SseEnabledCondition 的 matchIfMissing=true，
+        # 所以不写也是 sse —— 这里显式写出来是为了让配置自解释。
+        protocol: sse
+        # 对外暴露的 MCP 工具清单（tools/list）来源：
+        # 自动装配会收集容器里的 ToolCallbackProvider，见 ToolCallbackConverterAutoConfiguration。
+        # 我们的 AiHubMcpConfiguration 正好提供了这个 Bean。
+        name: aihub
+        version: 1.0.0
+        instructions: >-
+          AIHub 通用 AI 能力中台。可用工具：列出应用(aihub_list_applications)、
+          列出知识库(aihub_list_knowledge_bases)、检索知识库(aihub_search_knowledge)、
+          向指定应用提问(aihub_ask)。用户问「有哪些应用/知识库」时直接用对应工具，
+          不要凭猜测回答；需要基于企业文档回答时先检索再作答。
+        type: sync
+        # ★ 必须大于 aihub.mcp.timeout(HTTP 调用上游的超时)，否则上游慢查询会先被
+        #   MCP 层掐断，日志里只看到「MCP 请求超时」，排查时完全指不到 HTTP 那一层。
+        request-timeout: ${MCP_REQUEST_TIMEOUT:70s}
+        # SSE 是长连接，空闲连接容易被中间设备断开；定期 ping 保活。
+        keep-alive-interval: 30s
+        sse-endpoint: /sse
+        sse-message-endpoint: /mcp/message
+        capabilities:
+          # 本 Server 只提供工具，不提供 prompt / resource / completion。
+          # 按实际能力上报，客户端才不会去调根本不存在的东西。
+          tool: true
+          prompt: false
+          resource: false
+          completion: false
+        # 我们没有任何会在运行时变化的列表，关掉三类变更通知，
+        # 免去无意义的推送通道（这三个是顶层属性，和上面的 capabilities 同级）。
+        tool-change-notification: false
+        prompt-change-notification: false
+        resource-change-notification: false
+
+  # 本模块不接数据库/注册中心：它只是个「协议适配器」，
+  # 真正的业务能力全部通过 HTTP 调 AIHub 开放 API 获取。
+
+aihub:
+  mcp:
+    # 上游 AIHub 网关地址。走网关而不是直连 ai-service，
+    # 这样鉴权、限流、TraceId 透传等统一在网关生效。
+    base-url: ${AIHUB_BASE_URL:http://127.0.0.1:8080}
+    # 开放 API Key（网关 X-API-Key）。必须配，否则所有工具调用都会被网关 401 拒绝。
+    api-key: ${AIHUB_API_KEY:}
+    # 调用上游的超时，取值需小于上面的 spring.ai.mcp.server.request-timeout
+    timeout: ${AIHUB_HTTP_TIMEOUT:60s}
+    # aihub_ask 未显式指定 appId 时的兜底应用
+    default-app-id: ${AIHUB_DEFAULT_APP_ID:}
+    # aihub_search_knowledge 未指定 topK 时的默认条数
+    default-top-k: 5
+    # 单个知识分片回给模型的最大字符数，避免把上下文顶满
+    chunk-max-chars: 800
+
+logging:
+  level:
+    com.aihub.mcp: INFO
+    # 工具调用排查用；平时不建议开 DEBUG（会把请求体刷进日志）
+    # com.aihub.mcp.api: DEBUG

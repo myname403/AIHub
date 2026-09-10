@@ -45,7 +45,7 @@
 | M0 ✅ | 三服务骨架、JWT 鉴权、租户上下文、ArchUnit 卡口、docker-compose | 工程化、多租户 |
 | M1 ✅ | 模型网关（OpenAI 兼容协议族：openai/火山方舟/通义）、场景选模+主备降级、ChatClient 工厂（TTL 缓存）、**持久化会话记忆**、三种流式通道 | 第一章：ChatClient/Advisor/ChatMemory |
 | M2 ✅ | RAG 全链路：文档上传→解析→分片（段落+重叠）→向量化→检索→**回答带引用 [n]**；**引用落库可回溯**；**入库异步化（进度 + 重试）**；检索调试台；内置「天机AI助手」示例模板 | 第一章 ETL/VectorStore + 第二章 业务助手 |
-| M3 ✅ | 工具中心：@Tool 内置工具 TimeTools / KnowledgeTools（模型自主调用）；**MCP Client 真集成**（配置即连，工具自动挂载）；**工具调用审计**落 `ai_tool_call_log` | 第三章 MCP |
+| M3 ✅ | 工具中心：@Tool 内置工具 TimeTools / KnowledgeTools（模型自主调用）；**MCP Client 真集成**（配置即连，工具自动挂载）；**工具调用审计**落 `ai_tool_call_log`；**MCP Server 三模块**（一套 @Tool 实现，SSE 与 stdio 两种协议复用，把 AIHub 自身能力开放给 Claude Desktop / Cursor，见 3.8） | 第三章 MCP |
 | M4 ✅ | Agent 内核：PlanningAgent 任务拆解 → AgentRegistry 按名派发 → Table/Chart/HtmlDoc 生成 Agent → **产物落盘可预览**；agent.step 全程事件流；**三重预算**（子任务数 / Token / 超时）；**服务端可中断**；**任务与步骤落库** | 第四章 MyManus |
 | M5 ✅ | **配额硬限流**（策略+原子累加+超限拦截）、**配额多维度**（request / token / doc / task，一次调用批量原子扣减）、**Token 用量真实统计**、**审计 Advisor（call/stream 双路径）**、**TraceId 全链路**（网关起点 → Feign 透传 → MDC 日志 → 响应体）、**PDF/DOCX 解析**、**WebSocket 通道**（/ws/ai，令牌握手校验）、**知识库管理页** |
 | M5 ✅ | **开放 API Key 通道**（HMAC-SHA256 只存哈希、网关校验 + Caffeine 缓存、fail-closed）、**Micrometer 指标**（QPS / 延迟 / Token / 工具调用 / 配额拒绝）、**入库文件落本地磁盘**（重启后仍可重试）、**管理端页面**（模型管理 / 应用配置 / 用量看板） | 可观测性、开放平台 |
@@ -185,6 +185,96 @@ spring.ai.mcp.client:
 内置工具目前有两个：`TimeTools`（时间/日期计算）与 `KnowledgeTools`（让模型自主检索知识库，
 即 Agentic RAG——与被动注入上下文的 RAG 模式互为补充）。
 
+### 3.8 把 AIHub 暴露为 MCP Server（M3）
+
+上面 3.7 是"AIHub 作为 MCP 客户端去用别人的工具"。反过来，AIHub 自己也能当 MCP Server，
+把「列应用 / 列知识库 / 检索知识库 / 向应用提问」这四个能力交给 Claude Desktop、
+Cursor 等任意 MCP 客户端使用。
+
+模块按 ADR-3 拆成三个，**一套工具实现，两种协议复用**：
+
+| 模块 | 职责 |
+| --- | --- |
+| `aihub-mcp-service` | 工具的纯业务实现（`@Tool`），**协议无关**，可单测 |
+| `aihub-mcp-sse` | 以 SSE 对外提供在线服务（远程接入） |
+| `aihub-mcp-stdio` | 打成可执行 jar，由宿主进程以 stdio 拉起（本地接入） |
+
+对外暴露的工具：
+
+| 工具 | 参数 | 说明 |
+| --- | --- | --- |
+| `aihub_list_applications` | — | 列出可用的 AI 应用，返回的 id 即 `aihub_ask` 要填的 `appId` |
+| `aihub_list_knowledge_bases` | — | 列出知识库及 id |
+| `aihub_search_knowledge` | `kbId` · `query` · `topK` | 知识库语义检索，返回分片 + 来源文档名 + 相似度 |
+| `aihub_ask` | `message` · `appId` · `scene` | 向指定应用提问（含该应用的提示词与会话记忆） |
+
+#### 方式一：SSE（在线）
+
+```bash
+export AIHUB_API_KEY=ak_xxx            # 管理后台签发的开放 API Key
+java -jar aihub-mcp-sse/target/aihub-mcp-sse-1.0.0-SNAPSHOT.jar --server.port=8090
+# 握手：GET http://127.0.0.1:8090/sse  →  event:endpoint  data:/mcp/message?sessionId=xxx
+```
+
+客户端配置：
+
+```json
+{ "mcpServers": { "aihub": { "url": "http://127.0.0.1:8090/sse" } } }
+```
+
+#### 方式二：stdio（本地，推荐给桌面客户端）
+
+```json
+{
+  "mcpServers": {
+    "aihub": {
+      "command": "java",
+      "args": ["-jar", "E:/微服务/javaAI/javaai/aihub/aihub-mcp-stdio/target/aihub-mcp-stdio.jar"],
+      "env": { "AIHUB_API_KEY": "ak_xxx", "AIHUB_BASE_URL": "http://127.0.0.1:8080" }
+    }
+  }
+}
+```
+
+#### 配置项
+
+| 配置 | 默认值 | 说明 |
+| --- | --- | --- |
+| `aihub.mcp.base-url` | `http://127.0.0.1:8080` | 上游网关地址（走网关，鉴权/限流统一生效） |
+| `aihub.mcp.api-key` | 空 | 开放 API Key，**不配则所有工具调用被网关 401** |
+| `aihub.mcp.timeout` | `60s` | 调上游的 HTTP 超时 |
+| `aihub.mcp.default-app-id` | 空 | `aihub_ask` 不传 `appId` 时的兜底应用 |
+| `aihub.mcp.default-top-k` | `5` | 检索默认条数（上限 20） |
+| `aihub.mcp.chunk-max-chars` | `800` | 单个分片回给模型的最大字符数 |
+
+#### 四个踩过的坑（都已修掉，改动时别踩回去）
+
+1. **stdio 下 stdout 就是 JSON-RPC 通道**。Spring Boot 的 banner 和默认控制台日志都往
+   stdout 写，插进去一条就会让客户端解析失败——现象是"一连上就崩"且报错毫无指向性。
+   `aihub-mcp-stdio` 因此关掉了 banner（`spring.main.banner-mode: off`），
+   并用专用的 `logback-spring.xml` 把控制台输出改到 **System.err** 并同时落文件
+   （`%TEMP%/aihub-mcp-stdio/`）。
+2. **stdio 传输要显式开开关**：`spring.ai.mcp.server.stdio: true`。
+   缺失或为 false 时框架走的是"有 HTTP 端点"的那套装配，进程会安静地起一个 Tomcat
+   并等 HTTP 请求，而 stdin 那边永远没有响应。
+3. **关掉用不到的注解扫描器**：`spring.ai.mcp.server.annotation-scanner.enabled: false`。
+   我们走的是 `@Tool` + `ToolCallbackProvider` 这条线；若不关，starter 里的
+   `mcp-annotations` 库会在启动时扫全类路径找 `@McpTool`，扫不到就打一条
+   `No tool methods found ...` 的 WARN——纯噪音，还容易被误读成"工具没注册上"。
+4. **MCP 层超时要大于 HTTP 层超时**：`spring.ai.mcp.server.request-timeout` 默认只有 20s，
+   小于我们调上游的 60s。不调的话，上游慢查询会先被 MCP 层掐断，日志里只看到
+   "MCP 请求超时"，完全指不到 HTTP 那一层。故两处都设为 **70s > 60s**。
+
+> 排查手法：stdio 版可以直接手工喂 JSON-RPC 验证，不依赖客户端——
+> ```bash
+> { echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"p","version":"1"}}}';
+>   sleep 10; echo '{"jsonrpc":"2.0","method":"notifications/initialized"}'; sleep 2;
+>   echo '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'; sleep 5; } \
+>   | java -jar aihub-mcp-stdio/target/aihub-mcp-stdio.jar
+> ```
+> 两个要点：**必须保持 stdin 打开并留出间隔**（一次性灌完立刻 EOF，进程会在处理
+> 第二个请求前退出，看起来像"tools/list 无响应"）；stdout 里**只应有 JSON 行**。
+
 ## 四、接口速查（经网关，需 Bearer Token）
 
 | 接口 | 说明 |
@@ -261,17 +351,20 @@ curl -X POST http://127.0.0.1:8080/api/ai/chat \
 
 ## 五、遗留事项（可选增强，架构已就位）
 
-1. **MCP Server 三模块**（service/sse/stdio）：把平台对话与知识检索暴露为 MCP 服务
-   （Client 侧已打通，Server 侧尚未实现）
-2. **浏览器控制 Agent**：接入 Playwright MCP（课程第四章的页面标注方案）
-3. **Nacos 配置迁移**：基础设施配置（超时/限流/开关）迁入 Nacos 热更新（`spring.config.import: optional:nacos:` 已就绪，standalone 模式下自动跳过）
-4. **Sentinel 规则持久化**：规则写入 Nacos DataSource
-5. **对象存储替换本地磁盘**：入库原始文件当前落在 `{AIHUB_INGEST_DIR}/{tenantId}/{docId}.bin`
+1. **浏览器控制 Agent**：接入 Playwright MCP（课程第四章的页面标注方案）
+2. **Nacos 配置迁移**：基础设施配置（超时/限流/开关）迁入 Nacos 热更新（`spring.config.import: optional:nacos:` 已就绪，standalone 模式下自动跳过）
+3. **Sentinel 规则持久化**：规则写入 Nacos DataSource
+4. **对象存储替换本地磁盘**：入库原始文件当前落在 `{AIHUB_INGEST_DIR}/{tenantId}/{docId}.bin`
    （临时文件 + 原子改名写入），**服务重启后仍可重试**；多实例部署时因各节点本地盘不共享，
    重试可能落到没有该文件的节点——生产建议换 MinIO / OSS
-6. **指标接入可视化**：Micrometer 已埋点并暴露 `/actuator/prometheus`，接 Prometheus + Grafana 即可出图
+5. **指标接入可视化**：Micrometer 已埋点并暴露 `/actuator/prometheus`，接 Prometheus + Grafana 即可出图
+6. **MCP Server 的多租户与鉴权**：当前 SSE 通道自身不做鉴权（鉴权在它背后的开放 API 上），
+   默认只绑 `127.0.0.1`；若要跨机暴露，需在前面加一层带鉴权的反向代理
+7. **MCP Server 的 streamable-http 传输**：`spring.ai.mcp.server.protocol` 已支持
+   `streamable` / `stateless`，需要时改配置即可，工具实现不用动
 
-> 已完成（原遗留事项）：管理端页面（模型 / 应用 / 用量看板）、入库文件落盘、Micrometer 指标、API Key 认证。
+> 已完成（原遗留事项）：**MCP Server 三模块**（service / sse / stdio，见 3.8）、
+> 管理端页面（模型 / 应用 / 用量看板）、入库文件落盘、Micrometer 指标、API Key 认证。
 
 ## 六、安全红线（务必遵守）
 
