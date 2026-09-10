@@ -46,7 +46,7 @@
 | M1 ✅ | 模型网关（OpenAI 兼容协议族：openai/火山方舟/通义）、场景选模+主备降级、ChatClient 工厂（TTL 缓存）、**持久化会话记忆**、三种流式通道 | 第一章：ChatClient/Advisor/ChatMemory |
 | M2 ✅ | RAG 全链路：文档上传→解析→分片（段落+重叠）→向量化→检索→**回答带引用 [n]**；**引用落库可回溯**；**入库异步化（进度 + 重试）**；检索调试台；内置「天机AI助手」示例模板 | 第一章 ETL/VectorStore + 第二章 业务助手 |
 | M3 ✅ | 工具中心：@Tool 内置工具 TimeTools / KnowledgeTools（模型自主调用）；**MCP Client 真集成**（配置即连，工具自动挂载）；**工具调用审计**落 `ai_tool_call_log`；**MCP Server 三模块**（一套 @Tool 实现，SSE 与 stdio 两种协议复用，把 AIHub 自身能力开放给 Claude Desktop / Cursor，见 3.8） | 第三章 MCP |
-| M4 ✅ | Agent 内核：PlanningAgent 任务拆解 → AgentRegistry 按名派发 → Table/Chart/HtmlDoc 生成 Agent → **产物落盘可预览**；agent.step 全程事件流；**三重预算**（子任务数 / Token / 超时）；**服务端可中断**；**任务与步骤落库** | 第四章 MyManus |
+| M4 ✅ | Agent 内核：PlanningAgent 任务拆解 → AgentRegistry 按名派发 → Table/Chart/HtmlDoc 生成 Agent → **产物落盘可预览**；agent.step 全程事件流；**三重预算**（子任务数 / Token / 超时）；**服务端可中断**；**任务与步骤落库**；**浏览器控制 Agent**（页面标注 + 真实点击输入，见 3.9） | 第四章 MyManus |
 | M5 ✅ | **配额硬限流**（策略+原子累加+超限拦截）、**配额多维度**（request / token / doc / task，一次调用批量原子扣减）、**Token 用量真实统计**、**审计 Advisor（call/stream 双路径）**、**TraceId 全链路**（网关起点 → Feign 透传 → MDC 日志 → 响应体）、**PDF/DOCX 解析**、**WebSocket 通道**（/ws/ai，令牌握手校验）、**知识库管理页** |
 | M5 ✅ | **开放 API Key 通道**（HMAC-SHA256 只存哈希、网关校验 + Caffeine 缓存、fail-closed）、**Micrometer 指标**（QPS / 延迟 / Token / 工具调用 / 配额拒绝）、**入库文件落本地磁盘**（重启后仍可重试）、**管理端页面**（模型管理 / 应用配置 / 用量看板） | 可观测性、开放平台 |
 
@@ -275,6 +275,51 @@ java -jar aihub-mcp-sse/target/aihub-mcp-sse-1.0.0-SNAPSHOT.jar --server.port=80
 > 两个要点：**必须保持 stdin 打开并留出间隔**（一次性灌完立刻 EOF，进程会在处理
 > 第二个请求前退出，看起来像"tools/list 无响应"）；stdout 里**只应有 JSON 行**。
 
+### 3.9 浏览器控制 Agent（M4 · 页面标注方案）
+
+让模型真的去「看页面、点按钮、填表单」。**零第三方依赖**：不引入 Playwright / Selenium，
+直接用 JDK 自带的 `java.net.http.WebSocket` 说 CDP（Chrome DevTools Protocol），
+复用本机已装的 Chrome / Edge——不下载任何浏览器内核。
+
+```bash
+# 1) 开启能力（默认关闭：会拉起本机 Chrome，且让模型访问任意 URL，属重资源 + SSRF 面）
+set AIHUB_BROWSER_ENABLED=true
+# 生产建议同时配置地址白名单 aihub.browser.allowed-url-prefixes
+
+# 2) 对话里直接说「打开 https://example.com，在搜索框输入 AIHub 并点提交」——
+#    模型自主调用 browser_open / browser_snapshot / browser_click / browser_type 四个工具
+```
+
+工作方式（页面标注）：
+1. 每次观察都往页面注入一段标注脚本：只挑**可见可交互**的元素（a/button/input/…），
+   分配短引用 `e1..eN` 并写回页面 `data-testid`；嵌套可点击元素只留内层（点击会冒泡）；
+2. 模型只看精简清单（`[e3] button 提交`），不接触原始 HTML——token 可控且不会臆想元素；
+3. 点击 = 滚动到元素中心 → 命中校验（防遮挡点空）→ `Input.dispatchMouseEvent`
+   派发真实鼠标事件（`el.click()` 不触发 pointer 事件）；
+4. 输入 = 聚焦 + 全选 → `Input.insertText`（模拟输入法，正确触发 input/change 事件，
+   React/Vue 受控组件才能收到；直接 `el.value=xxx` 是无效的）。
+
+两种用法：
+- **工具**：对话模型在普通聊天里随手调用（按 `租户:会话` 复用同一个浏览器）；
+- **Agent**：`browser` Agent 走 ReAct 循环（观察→决策→行动→再观察），
+  受三重预算与服务端中断约束，`agent.step` 事件全程可见，步骤落库可回放。
+
+| 配置项 | 默认 | 说明 |
+| --- | --- | --- |
+| `aihub.browser.enabled` | false | 总开关 |
+| `aihub.browser.executable` | 自动探测 | 留空按 Chrome → Edge → PATH 顺序找本机浏览器 |
+| `aihub.browser.headless` | true | 调试时设 false，可亲眼看到模型在点什么 |
+| `aihub.browser.max-elements` | 120 | 单次标注元素上限（token 封顶） |
+| `aihub.browser.idle-timeout` | 5m | 会话空闲回收（一个 Chrome 几百 MB，必须还） |
+| `aihub.browser.max-sessions` | 3 | 并发会话上限 |
+| `aihub.browser.allowed-url-prefixes` | 空 | URL 前缀白名单，生产强烈建议配置 |
+
+安全边界（缺一不可）：
+- 只放行 http/https：`file://` 能读本地文件、`javascript:` 能执行脚本，一律拒绝；
+- 模型拿不到「执行任意 JS」的口子，能做的只有 open / snapshot / click / type 四个结构化动作；
+- 浏览器用独立临时 user-data-dir 启动（不碰用户日常配置）；空闲自动回收；
+  服务停机与异常路径都按整棵进程树回收，不留孤儿 Chrome。
+
 ## 四、接口速查（经网关，需 Bearer Token）
 
 | 接口 | 说明 |
@@ -351,19 +396,20 @@ curl -X POST http://127.0.0.1:8080/api/ai/chat \
 
 ## 五、遗留事项（可选增强，架构已就位）
 
-1. **浏览器控制 Agent**：接入 Playwright MCP（课程第四章的页面标注方案）
-2. **Nacos 配置迁移**：基础设施配置（超时/限流/开关）迁入 Nacos 热更新（`spring.config.import: optional:nacos:` 已就绪，standalone 模式下自动跳过）
-3. **Sentinel 规则持久化**：规则写入 Nacos DataSource
-4. **对象存储替换本地磁盘**：入库原始文件当前落在 `{AIHUB_INGEST_DIR}/{tenantId}/{docId}.bin`
+1. **Nacos 配置迁移**：基础设施配置（超时/限流/开关）迁入 Nacos 热更新（`spring.config.import: optional:nacos:` 已就绪，standalone 模式下自动跳过）
+2. **Sentinel 规则持久化**：规则写入 Nacos DataSource
+3. **对象存储替换本地磁盘**：入库原始文件当前落在 `{AIHUB_INGEST_DIR}/{tenantId}/{docId}.bin`
    （临时文件 + 原子改名写入），**服务重启后仍可重试**；多实例部署时因各节点本地盘不共享，
    重试可能落到没有该文件的节点——生产建议换 MinIO / OSS
-5. **指标接入可视化**：Micrometer 已埋点并暴露 `/actuator/prometheus`，接 Prometheus + Grafana 即可出图
-6. **MCP Server 的多租户与鉴权**：当前 SSE 通道自身不做鉴权（鉴权在它背后的开放 API 上），
+4. **指标接入可视化**：Micrometer 已埋点并暴露 `/actuator/prometheus`，接 Prometheus + Grafana 即可出图
+5. **MCP Server 的多租户与鉴权**：当前 SSE 通道自身不做鉴权（鉴权在它背后的开放 API 上），
    默认只绑 `127.0.0.1`；若要跨机暴露，需在前面加一层带鉴权的反向代理
-7. **MCP Server 的 streamable-http 传输**：`spring.ai.mcp.server.protocol` 已支持
+6. **MCP Server 的 streamable-http 传输**：`spring.ai.mcp.server.protocol` 已支持
    `streamable` / `stateless`，需要时改配置即可，工具实现不用动
 
-> 已完成（原遗留事项）：**MCP Server 三模块**（service / sse / stdio，见 3.8）、
+> 已完成（原遗留事项）：**浏览器控制 Agent**（未接 Playwright MCP，改为裸 CDP 直连
+> 本机浏览器——零下载、零第三方依赖，能力完全一致，见 3.9）、
+> **MCP Server 三模块**（service / sse / stdio，见 3.8）、
 > 管理端页面（模型 / 应用 / 用量看板）、入库文件落盘、Micrometer 指标、API Key 认证。
 
 ## 六、安全红线（务必遵守）

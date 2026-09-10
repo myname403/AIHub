@@ -15,6 +15,13 @@
   报 `Could not get a real path from path \d\Java_JDK\...`。
 - PowerShell 里若命令输出被管道吞掉，用 `*>&1 | Tee-Object -FilePath <log> | Out-Null`
   落盘后再 grep，否则看不到 BUILD 结果。
+- **★ 跑服务/验证端口前先看环境变量**：本机宿主进程会注入 `SERVER__PORT=62350`，
+  宽松绑定下**优先级高于 `application.yml` 里的 `server.port`**，会让 Tomcat 起在
+  62350 上、还可能因端口被宿主自己占用而启动失败（报 "Port 62350 was already in use"）。
+  验证时用命令行参数覆盖：`java -jar xxx.jar --server.port=8090`（命令行优先级最高）。
+- **★ Git Bash 的 `/tmp` 实际是 `C:\Users\28358\AppData\Local\Temp`**。
+  在里面解包 jar 排查问题会往 C 盘堆几百个文件（用户会注意到），用完记得 `rm -rf` 清掉；
+  仓库根目录也不要留 `*.log`（虽被 gitignore，但会脏化项目目录）。
 
 ## 二、分层架构（ArchUnit 构建期强制，地位高于一切）
 
@@ -66,7 +73,8 @@
 
 - 单测：JUnit5 + Mockito（严格桩，多余的 stub 会报 `UnnecessaryStubbingException`）。
 - 指标测试用 `SimpleMeterRegistry`；工具类用 `ReflectionTestUtils` 注入 `@Value` 字段。
-- 改动后跑全量：`mvnd test`（当前 **180 个用例**：common 30 / platform 41 / ai-service 109）。
+- 改动后跑全量：`mvnd test`（当前 **259 个用例**：common 30 / platform 41 / ai-service 144 /
+  mcp-service 42 / mcp-sse 1 / mcp-stdio 1；另有 `BrowserEndToEndIT` 默认不跑，需真实 Chrome）。
 - 提交前再跑一次 `mvnd -DskipTests install` 确认 4 份可执行 jar 产出正常。
 - 测试会**真实抓到实现 bug**（历史上抓到过 convOf 边界、retry 绕过终态写入等），
   失败时优先怀疑实现而不是改断言。
@@ -75,3 +83,15 @@
 
 - platform：V1~V6；ai-service：V1~V8。**新增迁移一律用新版本号，不改历史脚本**。
 - 脚本需幂等：`CREATE TABLE IF NOT EXISTS`、种子数据用 `ON DUPLICATE KEY UPDATE`。
+
+## 八、浏览器能力（aihub.browser.*，默认关闭）
+
+- 注册收敛在 `BrowserConfiguration` 一个类（enabled 开关）；工具用
+  `ObjectProvider<BrowserTools>` 挂载，缺席即降级；BrowserAgent 同样在该配置类注册。
+- 踩过的坑：**record 不能有实例字段**；**finally 里读 try/catch 赋值的局部变量编译不过**
+  （catch 自身可能先抛）；**Chrome 对相对 --user-data-dir 视为无效**（回落默认目录并拒绝开
+  调试端口），必须 toAbsolutePath()；**页面标注必须先清上一轮的 data-testid**——否则隐藏元素
+  残留旧 ref，querySelector 命中"幽灵元素"导致静默空点（遮挡校验里 t.contains(w) 祖先误判
+  已删）；**URL 前缀白名单要防混淆**（example.com.evil.io 不能匹配 example.com，查前缀后字符）。
+- E2E：`mvnd -pl aihub-ai-service -Dtest=BrowserEndToEndIT test`（无 Chrome 必失败，CI 别开）；
+  现场截图 target/browser-e2e.png。

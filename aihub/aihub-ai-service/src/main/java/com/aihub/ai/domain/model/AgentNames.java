@@ -22,6 +22,9 @@ public final class AgentNames {
     /** 网页 / 文档生成 Agent（默认兜底） */
     public static final String HTML = "html";
 
+    /** 浏览器操作 Agent：控制浏览器访问网页、按标注点击输入（对齐课程 ReActBrowserAgent） */
+    public static final String BROWSER = "browser";
+
     private AgentNames() {
     }
 }

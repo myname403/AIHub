@@ -115,6 +115,22 @@ aihub:
     max-tokens: ${AIHUB_AGENT_MAX_TOKENS:0}
     # 单任务墙钟超时（毫秒）
     timeout-ms: ${AIHUB_AGENT_TIMEOUT_MS:180000}
+    # 浏览器 Agent 单任务最大决策步数
+    browser:
+      max-steps: 8
+  # 浏览器控制（默认关闭：会拉起本机 Chrome，且让模型访问网页，属重资源 + SSRF 面）
+  # 开启后：对话模型获得 browser_open/snapshot/click/type 四个工具，并注册 browser Agent
+  browser:
+    enabled: ${AIHUB_BROWSER_ENABLED:false}
+    # 浏览器可执行文件路径；留空则自动探测本机 Chrome/Edge（不下载任何内核）
+    # executable: C:/Program Files/Google/Chrome/Application/chrome.exe
+    # headless: true
+    # max-elements: 120          # 单次页面标注的元素上限（控制 token 成本）
+    # idle-timeout: 5m           # 会话空闲多久后回收浏览器进程
+    # max-sessions: 3            # 同时存在的浏览器会话上限
+    # 地址白名单（生产强烈建议配置；留空表示允许任意 http/https）
+    # allowed-url-prefixes:
+    #   - https://example.com
   artifact-dir: ${AIHUB_ARTIFACT_DIR:./data/artifacts}
   artifact-url-prefix: /api/ai/artifact
   # 平台服务不可用时的降级开关（见 07 号文档第 2 节）

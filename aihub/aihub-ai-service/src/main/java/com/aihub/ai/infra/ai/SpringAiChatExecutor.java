@@ -49,7 +49,7 @@ public class SpringAiChatExecutor implements ChatExecutor {
 
     @Override
     public StreamResult call(ChatTurn turn) {
-        AiCallContext.set(turn.tenantId(), turn.appId(), turn.scene());
+        AiCallContext.set(turn.tenantId(), turn.appId(), turn.scene(), turn.conversationId());
         long start = System.currentTimeMillis();
         try {
             ChatClient client = chatClientFactory.create(turn.tenantId(), turn.appId(), turn.scene());
@@ -97,7 +97,7 @@ public class SpringAiChatExecutor implements ChatExecutor {
 
     @Override
     public StreamResult stream(ChatTurn turn, StreamSink sink) {
-        AiCallContext.set(turn.tenantId(), turn.appId(), turn.scene());
+        AiCallContext.set(turn.tenantId(), turn.appId(), turn.scene(), turn.conversationId());
         ChatClient client = chatClientFactory.create(turn.tenantId(), turn.appId(), turn.scene());
         String memoryKey = DbChatMemory.key(turn.tenantId(), turn.conversationId());
         long start = System.currentTimeMillis();

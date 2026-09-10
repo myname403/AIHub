@@ -49,6 +49,8 @@ public class ChatClientFactory {
     /** 外部工具提供者（MCP Client starter 自动装配的 ToolCallbackProvider） */
     private final ObjectProvider<ToolCallbackProvider> externalToolProviders;
     private final KnowledgeTools knowledgeTools;
+    /** 浏览器工具（可选）：aihub.browser.enabled=false 时容器里没有这个 bean，自动缺席 */
+    private final ObjectProvider<com.aihub.ai.infra.ai.tools.BrowserTools> browserToolsProvider;
     private final com.aihub.ai.infra.metrics.AiMetrics aiMetrics;
 
     @Value("${aihub.security.data-key:aihub-dev-data-key}")
@@ -74,6 +76,7 @@ public class ChatClientFactory {
                              ToolCallLogStore toolCallLogStore,
                              ObjectProvider<ToolCallbackProvider> externalToolProviders,
                              KnowledgeTools knowledgeTools,
+                             ObjectProvider<com.aihub.ai.infra.ai.tools.BrowserTools> browserToolsProvider,
                              com.aihub.ai.infra.metrics.AiMetrics aiMetrics) {
         this.modelGateway = modelGateway;
         this.configRepository = configRepository;
@@ -84,6 +87,7 @@ public class ChatClientFactory {
         this.toolCallLogStore = toolCallLogStore;
         this.externalToolProviders = externalToolProviders;
         this.knowledgeTools = knowledgeTools;
+        this.browserToolsProvider = browserToolsProvider;
         this.aiMetrics = aiMetrics;
     }
 
@@ -139,8 +143,14 @@ public class ChatClientFactory {
      */
     private List<ToolCallback> buildToolCallbacks() {
         List<ToolCallback> callbacks = new ArrayList<>();
+        // 内置工具：时间、知识库固定挂载；浏览器工具仅在能力开启时存在
+        List<Object> toolObjects = new ArrayList<>(List.of(new TimeTools(), knowledgeTools));
+        com.aihub.ai.infra.ai.tools.BrowserTools browserTools = browserToolsProvider.getIfAvailable();
+        if (browserTools != null) {
+            toolObjects.add(browserTools);
+        }
         for (ToolCallback callback : MethodToolCallbackProvider.builder()
-                .toolObjects(new TimeTools(), knowledgeTools)
+                .toolObjects(toolObjects.toArray())
                 .build()
                 .getToolCallbacks()) {
             callbacks.add(new AuditedToolCallback(callback, toolCallLogStore, "local", aiMetrics));
