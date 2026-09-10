@@ -40,11 +40,11 @@
         </view>
         <view class="field row">
           <text class="label">设为默认模型</text>
-          <switch :checked="form.defaultModel" @change="(e) => (form.defaultModel = e.detail.value)" />
+          <switch :checked="form.defaultModel" @change="onDefaultChange" />
         </view>
         <view class="field row">
           <text class="label">启用</text>
-          <switch :checked="form.status === 1" @change="(e) => (form.status = e.detail.value ? 1 : 0)" />
+          <switch :checked="form.status === 1" @change="onStatusChange" />
         </view>
         <button class="btn primary" @click="submit">{{ editingId ? '保存修改' : '创建模型' }}</button>
       </view>
@@ -112,6 +112,19 @@ import { get, post, put, del } from '../../common/request.js'
 
 const SCENES = ['chat', 'rag', 'embed', 'agent-plan']
 
+/** 抽出为模块级函数（而非组件方法），data() 初始化时不依赖 this */
+function blankForm() {
+  return {
+    providerCode: '',
+    modelCode: '',
+    apiKey: '',
+    baseUrl: '',
+    vectorDim: '',
+    defaultModel: false,
+    status: 1
+  }
+}
+
 export default {
   data() {
     return {
@@ -120,7 +133,7 @@ export default {
       routes: [],
       showForm: false,
       editingId: null,
-      form: this.blankForm(),
+      form: blankForm(),
       providerIndex: 0,
       routeIndex: 0,
       primaryIndex: 0,
@@ -146,17 +159,6 @@ export default {
     this.reload()
   },
   methods: {
-    blankForm() {
-      return {
-        providerCode: '',
-        modelCode: '',
-        apiKey: '',
-        baseUrl: '',
-        vectorDim: '',
-        defaultModel: false,
-        status: 1
-      }
-    },
     async reload() {
       try {
         const [providers, models, routes] = await Promise.all([
@@ -178,7 +180,7 @@ export default {
       this.showForm = !this.showForm
       if (!this.showForm) {
         this.editingId = null
-        this.form = this.blankForm()
+        this.form = blankForm()
       }
     },
     edit(m) {
@@ -210,6 +212,12 @@ export default {
     onFallbackChange(e) {
       this.fallbackIndex = Number(e.detail.value)
     },
+    onDefaultChange(e) {
+      this.form.defaultModel = e.detail.value
+    },
+    onStatusChange(e) {
+      this.form.status = e.detail.value ? 1 : 0
+    },
     async submit() {
       this.tip = ''
       if (!this.form.providerCode || !this.form.modelCode) {
@@ -235,7 +243,7 @@ export default {
           this.ok('已创建')
         }
         this.editingId = null
-        this.form = this.blankForm()
+        this.form = blankForm()
         this.showForm = false
         this.reload()
       } catch (e) {

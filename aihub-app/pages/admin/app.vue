@@ -33,7 +33,7 @@
         </view>
         <view class="field row">
           <text class="label">启用</text>
-          <switch :checked="form.status === 1" @change="(e) => (form.status = e.detail.value ? 1 : 0)" />
+          <switch :checked="form.status === 1" @change="onStatusChange" />
         </view>
         <button class="btn primary" @click="submit">{{ editingId ? '保存修改' : '创建应用' }}</button>
       </view>
@@ -65,6 +65,18 @@ import { get, post, put, del } from '../../common/request.js'
 const STRATEGIES = ['none', 'react', 'plan_execute']
 const MEMORY = ['window', 'summary']
 
+/** 抽出为模块级函数（而非组件方法），data() 初始化时不依赖 this */
+function blankForm() {
+  return {
+    name: '',
+    systemPrompt: '',
+    agentStrategy: STRATEGIES[0],
+    memoryPolicy: MEMORY[0],
+    temperature: '0.70',
+    status: 1
+  }
+}
+
 export default {
   data() {
     return {
@@ -72,7 +84,7 @@ export default {
       bound: {},
       showForm: false,
       editingId: null,
-      form: this.blankForm(),
+      form: blankForm(),
       strategyIndex: 0,
       memoryIndex: 0,
       tip: '',
@@ -85,16 +97,6 @@ export default {
     this.reload()
   },
   methods: {
-    blankForm() {
-      return {
-        name: '',
-        systemPrompt: '',
-        agentStrategy: STRATEGIES[0],
-        memoryPolicy: MEMORY[0],
-        temperature: '0.70',
-        status: 1
-      }
-    },
     async reload() {
       try {
         this.apps = (await get('/api/ai/app')) || []
@@ -102,9 +104,9 @@ export default {
         this.apps.forEach(async (a) => {
           try {
             const ids = await get('/api/ai/app/' + a.id + '/knowledge-bases')
-            this.$set(this.bound, a.id, ids || [])
+            this.bound[a.id] = ids || []
           } catch (e) {
-            this.$set(this.bound, a.id, [])
+            this.bound[a.id] = []
           }
         })
       } catch (e) {
@@ -115,7 +117,7 @@ export default {
       this.showForm = !this.showForm
       if (!this.showForm) {
         this.editingId = null
-        this.form = this.blankForm()
+        this.form = blankForm()
       }
     },
     edit(a) {
@@ -141,6 +143,9 @@ export default {
     onMemoryChange(e) {
       this.memoryIndex = Number(e.detail.value)
       this.form.memoryPolicy = MEMORY[this.memoryIndex]
+    },
+    onStatusChange(e) {
+      this.form.status = e.detail.value ? 1 : 0
     },
     async submit() {
       this.tip = ''
@@ -173,7 +178,7 @@ export default {
           this.ok('已创建')
         }
         this.editingId = null
-        this.form = this.blankForm()
+        this.form = blankForm()
         this.showForm = false
         this.reload()
       } catch (e) {
