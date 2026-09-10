@@ -1,0 +1,12 @@
+# Grafana 数据源自动装配：启动即注册 Prometheus，无需手工在 UI 里添加
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    uid: prometheus
+    access: proxy
+    # 容器网络内直连 prometheus 服务名
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false

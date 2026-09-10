@@ -67,10 +67,14 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        # prometheus 供指标抓取（Prometheus + Grafana 可视化）
+        include: health,info,prometheus
   endpoint:
     health:
       show-details: always
+  metrics:
+    tags:
+      application: ${spring.application.name}
 
 # 接口文档（springdoc / Swagger UI）：http://127.0.0.1:8081/swagger-ui.html
 # 生产不对外暴露时改 enabled=false，并在网关/防火墙限制服务端口直连

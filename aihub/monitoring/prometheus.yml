@@ -1,0 +1,27 @@
+# AIHub 指标抓取配置（Prometheus）
+# Java 服务跑在宿主机（docker compose 只承载基础设施），
+# 所以抓取目标是 host.docker.internal 而不是 compose 服务名。
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: aihub-gateway
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["host.docker.internal:8080"]
+
+  - job_name: aihub-platform-service
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["host.docker.internal:8081"]
+
+  - job_name: aihub-ai-service
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["host.docker.internal:8082"]
+
+  - job_name: aihub-mcp-sse
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["host.docker.internal:8090"]

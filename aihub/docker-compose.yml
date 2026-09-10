@@ -107,8 +107,43 @@ services:
       timeout: 5s
       retries: 15
 
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: aihub-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    extra_hosts:
+      # Java 服务跑宿主机，Prometheus 用 host.docker.internal 抓取（Linux 也生效）
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: aihub-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      # 登录凭据（本地开发默认值，生产务必修改）
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin123
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+
 volumes:
   mysql-data:
   redis-data:
   nacos-data:
   minio-data:
+  prometheus-data:
+  grafana-data:

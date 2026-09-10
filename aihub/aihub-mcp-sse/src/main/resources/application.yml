@@ -1,9 +1,8 @@
 server:
   # 8090 避开网关(8080)/平台(8081)/AI 服务(8082)
   port: ${MCP_SSE_PORT:8090}
-  # ★ 默认只绑回环地址。MCP 工具能读写业务数据（列应用、检索知识库、发起对话），
-  #   而这条 SSE 通道自身不做鉴权（鉴权在它背后的 AIHub 开放 API 上，用 X-API-Key）。
-  #   对外暴露前请自行加上反向代理 + 鉴权，或显式改成 0.0.0.0 并确认网络边界可控。
+  # 默认只绑回环地址。开启下方 aihub.mcp.auth 门禁后可按需改为 0.0.0.0 跨机暴露：
+  #   通道有了 Bearer 令牌门禁，工具数据的租户边界仍由上游开放 API Key（aihub.mcp.api-key）保证。
   address: ${MCP_SSE_ADDRESS:127.0.0.1}
 
 spring:
@@ -25,7 +24,10 @@ spring:
         # 传输协议：sse（默认）| streamable | stateless
         # 条件类 EnabledSseServerCondition.SseEnabledCondition 的 matchIfMissing=true，
         # 所以不写也是 sse —— 这里显式写出来是为了让配置自解释。
-        protocol: sse
+        # 切换 streamable-http：MCP_PROTOCOL=streamable（端点默认 /mcp，
+        # 见 spring.ai.mcp.server.streamable-http.*；无需新依赖/新模块，
+        # streamable 的 WebMvc 自动配置类就在 spring-ai-starter-mcp-server-webmvc 里）。
+        protocol: ${MCP_PROTOCOL:sse}
         # 对外暴露的 MCP 工具清单（tools/list）来源：
         # 自动装配会收集容器里的 ToolCallbackProvider，见 ToolCallbackConverterAutoConfiguration。
         # 我们的 AiHubMcpConfiguration 正好提供了这个 Bean。
@@ -75,6 +77,25 @@ aihub:
     default-top-k: 5
     # 单个知识分片回给模型的最大字符数，避免把上下文顶满
     chunk-max-chars: 800
+    # MCP 通道门禁（跨机暴露前开启）：开启后受保护端点要求
+    # Authorization: Bearer <token>；客户端（如 MCP Inspector / Cherry Studio）
+    # 在连接配置的 headers 里填 {"Authorization": "Bearer <token>"} 即可。
+    # enabled=true 但 token 为空会拒绝启动（fail-fast）。
+    auth:
+      enabled: ${AIHUB_MCP_AUTH_ENABLED:false}
+      token: ${AIHUB_MCP_AUTH_TOKEN:}
+      # 受保护端点：SSE 建连/消息回传 + streamable-http 默认端点
+      # protected-paths: ["/sse", "/mcp/message", "/mcp"]
+
+# 可观测性：prometheus 供指标抓取（MCP 网关侧工具调用/JVM 指标）
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  metrics:
+    tags:
+      application: ${spring.application.name}
 
 logging:
   level:

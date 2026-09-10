@@ -80,8 +80,8 @@
 
 - 单测：JUnit5 + Mockito（严格桩，多余的 stub 会报 `UnnecessaryStubbingException`）。
 - 指标测试用 `SimpleMeterRegistry`；工具类用 `ReflectionTestUtils` 注入 `@Value` 字段。
-- 改动后跑全量：`mvnd test`（当前 **276 个用例**：common 30 / platform 44 / ai-service 158 /
-  mcp-service 42 / mcp-sse 1 / mcp-stdio 1；另有 `BrowserEndToEndIT`、`MinioIngestFileStoreIT`
+- 改动后跑全量：`mvnd test`（当前 **283 个用例**：common 30 / platform 44 / ai-service 158 /
+  mcp-service 42 / mcp-sse 8 / mcp-stdio 1；另有 `BrowserEndToEndIT`、`MinioIngestFileStoreIT`
   默认不跑，分别需真实 Chrome / MinIO）。
 - **Mockito（Boot 3.5 默认 inline mock maker）stub 返回值会被按方法声明的返回类型强转**：
   stub `getObject` 这类返回具体类型的方法时，Answer 必须返回真实类型
@@ -148,3 +148,18 @@
 - 生产关闭：`springdoc.api-docs.enabled=false` + 网关/防火墙限服务端口直连。
 - 新增接口无需手写文档：controller 方法即文档；流式接口（SSE/NDJSON）在 UI
   里是一次性响应，联调用 curl。
+
+## 十二、指标可视化与 MCP 通道安全
+
+- 可视化栈：compose 起 prometheus(9090)+grafana(3000)，配置在 `aihub/monitoring/`
+  （prometheus.yml + grafana provisioning + 预装配仪表板「AIHub 全局观测」）。
+  Java 服务跑宿主机 → 抓取目标 `host.docker.internal`（Linux 要 extra_hosts host-gateway）。
+- 四服务均暴露 `/actuator/prometheus`；延迟直方图桶在 management.metrics.distribution 开。
+- Micrometer 命名：`.`→`_`；Timer `_seconds`、Counter `_total`（Grafana 查询别写错）。
+- MCP 通道门禁：`aihub.mcp.auth.enabled/token`（默认关）；开启后 /sse、/mcp/message、
+  /mcp 要求 Bearer token；token 空白且 enabled=true 拒绝启动；多租户=一实例一租户
+  （上游 aihub.mcp.api-key 定租户）。
+- **MCP streamable-http 无需新依赖**：webmvc starter 自带
+  McpServerStreamableHttpWebMvcAutoConfiguration；`MCP_PROTOCOL=streamable` 切换，
+  端点默认 /mcp（前缀 spring.ai.mcp.server.streamable-http）。
+- MCP 客户端带鉴权头：连接配置 headers 填 {"Authorization": "Bearer <token>"}。

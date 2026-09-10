@@ -19,10 +19,20 @@
             <artifactId>aihub-mcp-service</artifactId>
         </dependency>
 
-        <!-- MCP Server + WebMVC（SSE）传输。它自带 spring-boot-starter-web。 -->
+        <!-- MCP Server + WebMVC（SSE / Streamable-HTTP）传输。它自带 spring-boot-starter-web。 -->
         <dependency>
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-starter-mcp-server-webmvc</artifactId>
+        </dependency>
+
+        <!-- 可观测性：Actuator + Prometheus 导出（指标可视化） -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
         </dependency>
 
         <dependency>

@@ -236,6 +236,40 @@ java -jar aihub-mcp-sse/target/aihub-mcp-sse-1.0.0-SNAPSHOT.jar --server.port=80
 }
 ```
 
+#### 方式三：Streamable-HTTP（在线，单端点）
+
+同一模块（`aihub-mcp-sse`）内置 streamable-http 支持（WebMvc 自动配置类就在
+`spring-ai-starter-mcp-server-webmvc` 依赖里，**无需新依赖/新模块**），一个环境变量切换：
+
+```bash
+MCP_PROTOCOL=streamable java -jar aihub-mcp-sse/target/aihub-mcp-sse-1.0.0-SNAPSHOT.jar
+# 端点默认 /mcp（见 spring.ai.mcp.server.streamable-http.*，含 keep-alive 等），
+# 不再需要 SSE 的两次握手（建连 + message 回传），单端点 POST 即可。
+```
+
+```json
+{ "mcpServers": { "aihub": { "url": "http://127.0.0.1:8090/mcp" } } }
+```
+
+#### 通道门禁鉴权（跨机暴露前必开）
+
+MCP 通道历史上不做鉴权（默认只绑 `127.0.0.1`，工具数据的租户边界由上游开放
+API Key 保证）。**跨机暴露前开启门禁**，避免端口可达即工具裸奔：
+
+```bash
+AIHUB_MCP_AUTH_ENABLED=true \
+AIHUB_MCP_AUTH_TOKEN=替换成长随机串 \
+MCP_SSE_ADDRESS=0.0.0.0 \
+java -jar aihub-mcp-sse/target/aihub-mcp-sse-1.0.0-SNAPSHOT.jar
+```
+
+- 开启后 `/sse`、`/mcp/message`、`/mcp`（streamable）要求
+  `Authorization: Bearer <AIHUB_MCP_AUTH_TOKEN>`，否则 401；
+  客户端在连接配置的 headers 里带 `{"Authorization": "Bearer <token>"}` 即可；
+- 令牌比较用常量时间算法（防时序试探）；`enabled=true` 而 token 为空**拒绝启动**；
+- 多租户形态：一个 MCP 实例绑定一个租户（`aihub.mcp.api-key`），多租户 = 多实例，
+  数据边界由网关 Key 鉴权保证；要一条连接切租户需 MCP 生态支持会话级 headers 透传，后续演进。
+
 #### 配置项
 
 | 配置 | 默认值 | 说明 |
@@ -402,6 +436,34 @@ set AIHUB_STORAGE_TYPE=minio      # 不配置即保持 local，standalone 模式
 - 编译参数已开 `-parameters`（父 pom）——不加它，Boot 3.2+ 下未显式命名的
   `@RequestParam` 不会出现在文档里（springdoc 官方 FAQ 点名的坑）。
 
+### 3.13 指标可视化（Prometheus + Grafana）
+
+四个服务（gateway 8080 / platform 8081 / ai-service 8082 / mcp-sse 8090）均已暴露
+`/actuator/prometheus`，compose 一键拉起可视化栈：
+
+```bash
+docker compose up -d prometheus grafana
+```
+
+| 入口 | 地址 | 凭据 |
+| --- | --- | --- |
+| Prometheus | <http://127.0.0.1:9090> | — |
+| Grafana | <http://127.0.0.1:3000> | admin / admin123 |
+
+打开 Grafana 即有预装配的 **「AIHub 全局观测」** 仪表板（数据源与面板自动注入，
+无需手工配置），覆盖：
+
+- 服务在线状态、HTTP QPS 与 P95 延迟（按服务拆分）；
+- 对话调用速率与 P95 延迟（按场景 scene / 成败 status）；
+- Token 消耗（按模型、输入/输出方向）；
+- 文档入库各阶段（parse/split/save/vector）延迟 P95；
+- Agent 任务状态流、配额拒绝速率、JVM 堆内存。
+
+说明：Java 服务跑宿主机，Prometheus 通过 `host.docker.internal` 抓取
+（`monitoring/prometheus.yml`，Linux 下 compose 已配 `host-gateway` 映射）；
+自定义指标见 `AiMetrics`（`aihub.chat.*` / `aihub.ingest.*` 等），
+延迟直方图桶已在 `management.metrics.distribution` 打开（P95/P99 可算）。
+
 ## 四、接口速查（经网关，需 Bearer Token）
 
 | 接口 | 说明 |
@@ -459,6 +521,8 @@ curl -X POST http://127.0.0.1:8080/api/ai/chat \
 
 - **指标**：`GET /actuator/prometheus` 暴露 `aihub.chat.calls` / `aihub.chat.latency` /
   `aihub.tokens` / `aihub.tool.calls` / `aihub.agent.tasks` / `aihub.ingest.latency` / `aihub.quota.rejected`
+- **可视化**：Prometheus（:9090）+ Grafana（:3000，预装配「AIHub 全局观测」仪表板），
+  `docker compose up -d prometheus grafana` 一键拉起，见 3.13
 - 标签只包含低基数枚举值（status / model / stage / tool），**绝不放 tenantId / userId / conversationId**——
   否则时序库会被租户数量级放大
 
@@ -476,15 +540,14 @@ curl -X POST http://127.0.0.1:8080/api/ai/chat \
 
 排查示例：拿一个 traceId，在三份日志里 grep 即可还原完整调用链。
 
-## 五、遗留事项（可选增强，架构已就位）
+## 五、遗留事项
 
-1. **指标接入可视化**：Micrometer 已埋点并暴露 `/actuator/prometheus`，接 Prometheus + Grafana 即可出图
-2. **MCP Server 的多租户与鉴权**：当前 SSE 通道自身不做鉴权（鉴权在它背后的开放 API 上），
-   默认只绑 `127.0.0.1`；若要跨机暴露，需在前面加一层带鉴权的反向代理
-3. **MCP Server 的 streamable-http 传输**：`spring.ai.mcp.server.protocol` 已支持
-   `streamable` / `stateless`，需要时改配置即可，工具实现不用动
-
-> 已完成（原遗留事项）：**接口文档 OpenAPI 3 / Swagger UI**（springdoc 2.8.17，
+> 原遗留清单至此**全部完成**：
+>
+> **指标可视化**（Prometheus + Grafana，compose 一键拉起 + 预装配仪表板，见 3.13）、
+> **MCP Server 多租户鉴权**（通道门禁 Bearer 令牌，常量时间比较，跨机暴露前开启，见 3.8）、
+> **MCP streamable-http 传输**（同模块配置切换 `MCP_PROTOCOL=streamable`，零新依赖，见 3.8）、
+> **接口文档 OpenAPI 3 / Swagger UI**（springdoc 2.8.17，
 > 两个 REST 服务自动生成文档，见 3.12）、
 > **对象存储替换本地磁盘**（MinIO / S3 实现，`aihub.storage.type`
 > 一键切换，业务代码零改动，见 3.11）、
@@ -495,6 +558,9 @@ curl -X POST http://127.0.0.1:8080/api/ai/chat \
 > 本机浏览器——零下载、零第三方依赖，能力完全一致，见 3.9）、
 > **MCP Server 三模块**（service / sse / stdio，见 3.8）、
 > 管理端页面（模型 / 应用 / 用量看板）、入库文件落盘、Micrometer 指标、API Key 认证。
+>
+> 仍值得做的增强方向（无排期）：MCP 会话级多租户（一条连接切租户，需 MCP 生态
+> headers 透传支持）、Grafana 告警规则、HTTP 连接池治理、前端单测覆盖。
 
 ## 六、安全红线（务必遵守）
 

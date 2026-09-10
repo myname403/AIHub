@@ -77,10 +77,14 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,gateway
+        # prometheus 供指标抓取（Prometheus + Grafana 可视化，见 docs/monitoring）
+        include: health,info,gateway,prometheus
   endpoint:
     health:
       show-details: always
+  metrics:
+    tags:
+      application: ${spring.application.name}
 
 logging:
   level:

@@ -53,6 +53,15 @@
             <groupId>com.github.ben-manes.caffeine</groupId>
             <artifactId>caffeine</artifactId>
         </dependency>
+        <!-- 可观测性：Actuator + Prometheus 导出（指标可视化，见 docs/monitoring） -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+        </dependency>
         <!-- JWT 自解析：网关本地校验令牌，避免每个请求都回查平台服务 -->
         <dependency>
             <groupId>io.jsonwebtoken</groupId>

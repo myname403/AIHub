@@ -1,0 +1,12 @@
+# Grafana 仪表板自动装配：扫描 /var/lib/grafana/dashboards 下的 JSON
+apiVersion: 1
+
+providers:
+  - name: AIHub
+    folder: AIHub
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false
