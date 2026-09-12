@@ -25,6 +25,13 @@ import java.util.Optional;
  *   <li>状态与过期时间双重校验，停用或过期的 Key 立即失效；</li>
  *   <li>租户由 Key 反查得到——调用方无法通过传参指定租户（安全红线 1）。</li>
  * </ul>
+ *
+ * <p><b>MyBatis-Plus 用法提示（本类大量使用）：</b>
+ * {@code Wrappers.lambdaQuery()} 构造类型安全的查询条件，
+ * {@code SysApiKeyDO::getTenantId} 是方法引用，编译期就能发现字段名写错
+ * （比手写 SQL 字符串 "tenant_id" 安全得多）。@Value 注入的配置项支持
+ * "配置名:默认值"语法，配置中心没配时用默认值。
+ * 详见学习文档《04-平台服务-aihub-platform-service.md》。
  */
 @Slf4j
 @Service

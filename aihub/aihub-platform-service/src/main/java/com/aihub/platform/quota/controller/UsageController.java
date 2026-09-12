@@ -15,6 +15,11 @@ import java.util.List;
  * 用量看板接口（M5）。
  *
  * <p>租户取自会话上下文，<b>不接受前端传 tenantId</b>——否则等于开放跨租户读。
+ *
+ * <p>注解说明：@RequestParam(defaultValue="7") 给查询参数默认值（前端不传 days 就按 7 天算）；
+ * 只读接口统一用 @GetMapping；数据加工（补零、算比率）全部在 Service 层完成，
+ * Controller 保持"三行式"（取上下文 → 调服务 → 包响应）。
+ * 详见学习文档《04-平台服务-aihub-platform-service.md》。
  */
 @RestController
 @RequestMapping("/api/platform/usage")

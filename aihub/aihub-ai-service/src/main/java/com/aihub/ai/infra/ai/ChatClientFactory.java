@@ -31,10 +31,26 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * ChatClient 装配工厂（★ 扩展点）。
+ * ChatClient 装配工厂（★ 扩展点）—— 本服务最核心的"装配车间"。
+ *
+ * <p><b>Spring AI 核心概念速成（读本类前先懂这些）：</b>
+ * <ul>
+ *   <li><b>ChatModel</b>：一次模型调用的底层封装（指向哪家 API、什么密钥）——相当于"电话线"；</li>
+ *   <li><b>ChatClient</b>：构建在 ChatModel 之上的高级客户端，可挂系统提示词、记忆 Advisor、
+ *       工具 —— 相当于"装好了通讯录和助理的电话机"；</li>
+ *   <li><b>Advisor</b>：请求/响应的拦截器链（AOP 思想）。本项目挂了两个：
+ *       MessageChatMemoryAdvisor（自动把历史对话注入上下文）+ AuditAdvisor（审计留痕）；</li>
+ *   <li><b>ToolCallback</b>：给模型注册的"可调用函数"（function calling）——模型判断需要时
+ *       会让框架执行这个函数并把结果喂回模型。@Tool 注解的方法会被 MethodToolCallbackProvider 收集。</li>
+ * </ul>
+ *
+ * <p><b>为什么要工厂 + 缓存：</b>每个 (租户, 应用, 场景) 组合的模型配置、系统提示词、
+ * 挂载的工具都可能不同，ChatClient 不能全局共享一个；但每次对话都重新装配又太贵
+ * （要查库、要构建对象图），所以按 key 缓存 + TTL 过期（默认重装，配置改了自动生效）。
  *
  * <p>纯函数式装配：应用配置 -> ChatClient，按 (tenant, app, scene) 缓存，
  * 缓存带 TTL 以支持 Nacos / DB 配置变更后的自动刷新（无需重启）。
+ * 详见学习文档《05-AI服务-aihub-ai-service.md》。
  */
 @Slf4j
 @Component
@@ -94,6 +110,13 @@ public class ChatClientFactory {
         this.chatClientProperties = chatClientProperties;
     }
 
+    /**
+     * 获取（或装配）ChatClient。
+     * <p>双重检查锁（double-checked locking）经典范式：
+     * 先无锁查缓存（绝大多数请求走这条快路径）→ 未命中才 synchronized → 再查一次
+     * （防止两个线程同时通过第一次检查后重复装配）→ 装配并放入缓存。
+     * 注意缓存 key 是 (tenant, app, scene) 三元组拼接的字符串。
+     */
     public ChatClient create(Long tenantId, Long appId, String scene) {
         String key = tenantId + ":" + appId + ":" + scene;
         CacheEntry entry = cache.get(key);

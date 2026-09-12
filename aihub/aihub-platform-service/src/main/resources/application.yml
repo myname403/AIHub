@@ -5,7 +5,7 @@ spring:
   application:
     name: aihub-platform-service
   datasource:
-    url: jdbc:mysql://${MYSQL_HOST:127.0.0.1}:${MYSQL_PORT:3306}/${MYSQL_DB:aihub_platform}?useUnicode=true&characterEncoding=utf8mb4&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
+    url: jdbc:mysql://${MYSQL_HOST:127.0.0.1}:${MYSQL_PORT:3307}/${MYSQL_DB:aihub_platform}?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
     username: ${MYSQL_USER:root}
     password: ${MYSQL_PASSWORD:root123456}
     driver-class-name: com.mysql.cj.jdbc.Driver
@@ -15,6 +15,9 @@ spring:
     locations: classpath:db/migration
   cloud:
     nacos:
+      # 本地开发默认账号（Nacos 3.x 开启了鉴权）。生产环境用环境变量覆盖，不要提交真实密码
+      username: ${NACOS_USERNAME:nacos}
+      password: ${NACOS_PASSWORD:Nacos@aihub123}
       discovery:
         server-addr: ${NACOS_ADDR:127.0.0.1:8848}
         namespace: ${NACOS_NAMESPACE:public}
@@ -33,6 +36,8 @@ spring:
         flow:
           nacos:
             server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+            username: ${NACOS_USERNAME:nacos}
+            password: ${NACOS_PASSWORD:Nacos@aihub123}
             namespace: ${NACOS_NAMESPACE:public}
             group-id: ${NACOS_GROUP:DEFAULT_GROUP}
             data-id: aihub-platform-service-flow-rules

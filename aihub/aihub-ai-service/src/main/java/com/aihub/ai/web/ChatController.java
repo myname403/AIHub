@@ -43,7 +43,31 @@ import java.util.concurrent.Executors;
  *   <li>POST /api/ai/chat/ndjson  微信小程序（NDJSON Chunked，禁 gzip）</li>
  * </ul>
  *
- * <p>架构约束：web 层只依赖 application 与 domain，禁止触碰 Spring AI / infra。
+ * <p>架构约束：web 层只依赖 application 与 domain，禁止触碰 Spring AI / infra
+ * （ArchUnit 测试强制检查，违反直接编译不过测试）。
+ *
+ * <p><b>三种通道为什么要并存？（零基础必读）</b>
+ * <ul>
+ *   <li><b>SSE</b>（Server-Sent Events）：HTTP 长连接单向推送，浏览器原生支持，H5 首选；</li>
+ *   <li><b>NDJSON</b>（每行一个 JSON 的 Chunked 传输）：微信小程序 request API 不支持 SSE，
+ *       只能用 enableChunked 分块接收，每行一个 JSON 自己切分；</li>
+ *   <li><b>同步</b>：一次性返回全文，调试和简单集成用。</li>
+ * </ul>
+ * 三种通道共享同一套编排（ChatAppService），差异只体现在"事件怎么送出去"（StreamSink 实现）。
+ *
+ * <p><b>本类最值得学的模式 —— 流式任务与容器线程隔离：</b>
+ * 模型生成一句话要几秒到几十秒，不能占着 Tomcat 请求线程干等。
+ * 所以 Controller 把流式任务丢进自建线程池（streamExecutor），容器线程立刻释放；
+ * 跨线程必须用 TraceContext.wrap() 带上链路 ID（ThreadLocal 不跨线程，见 common 文档）。
+ *
+ * <p><b>注解/类说明：</b>
+ * <ul>
+ *   <li>{@code produces = TEXT_EVENT_STREAM_VALUE}：声明响应是 SSE 流（text/event-stream）；</li>
+ *   <li>{@code SseEmitter}：Spring MVC 的 SSE 推送器，返回它 = "这个响应我稍后慢慢写"；</li>
+ *   <li>{@code StreamingResponseBody}：更底层的流式写法，直接拿到 OutputStream 手写；</li>
+ *   <li>{@code @Valid}：触发 ChatRequest 里的 @NotBlank 校验。</li>
+ * </ul>
+ * 详见学习文档《05-AI服务-aihub-ai-service.md》。
  */
 @Slf4j
 @RestController

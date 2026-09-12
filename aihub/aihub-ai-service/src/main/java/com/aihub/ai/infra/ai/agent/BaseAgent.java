@@ -14,7 +14,16 @@ import org.springframework.ai.chat.model.ChatResponse;
 /**
  * Agent 基类（对齐课程 MyManus 的 BaseAgent：抽取公共逻辑，规范与复用）。
  *
+ * <p><b>模板方法模式（设计模式必学）：</b>abstract 类定义"骨架"——
+ * LLM 调用（llm）、预算校验（checkBudget）、步骤广播（step）、失败兜底（fallback）
+ * 全在这里统一实现；子类（Planning/Table/Chart/Html/Browser/Generation）
+ * 只需实现 execute() 填"具体怎么干"。新增一种 Agent = 一个几十行的子类。
+ *
+ * <p><b>abstract 关键字：</b>本类不能被实例化（new BaseAgent() 编译错），
+ * 只能被继承；abstract 方法（来自 Agent 接口的 execute）强制子类实现。
+ *
  * <p>子类只需实现 execute()，LLM 调用、预算校验与步骤事件广播在此统一提供。
+ * 详见学习文档《05-AI服务-aihub-ai-service.md》。
  */
 @Slf4j
 public abstract class BaseAgent implements Agent {

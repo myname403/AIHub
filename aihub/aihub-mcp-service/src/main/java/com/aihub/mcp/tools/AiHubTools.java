@@ -30,6 +30,16 @@ import java.util.List;
  * <p><b>③ 工具描述写得像给人看的说明书。</b>
  * 描述是模型选择工具的唯一依据。含糊的描述会让模型在「查知识库」和「问 AIHub」
  * 之间反复试错，浪费 token 和时间。
+ *
+ * <p><b>④ 两个关键注解：</b>
+ * <ul>
+ *   <li>{@code @Tool(name, description)}：把方法注册为 MCP 工具。name 是模型看到的工具名
+ *       （带 aihub_ 前缀防与其他来源的工具重名）；description 是模型决定"用不用、怎么用"
+ *       的唯一依据，所以写得像说明书（何时用、何时不该用、返回值怎么理解）；</li>
+ *   <li>{@code @ToolParam(description, required)}：参数说明。required=false 的参数模型可以不传，
+ *       方法里用默认值兜底。参数描述同样直接决定模型传参质量。</li>
+ * </ul>
+ * 详见学习文档《06-MCP工具三件套.md》。
  */
 public class AiHubTools {
 

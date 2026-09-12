@@ -14,7 +14,7 @@ services:
     image: mysql:8.0
     container_name: aihub-mysql
     ports:
-      - "3306:3306"
+      - "3307:3306"
     environment:
       MYSQL_ROOT_PASSWORD: root123456
       MYSQL_DATABASE: aihub_platform
@@ -73,18 +73,22 @@ services:
       retries: 15
 
   sentinel:
-    # 控制台版本与客户端 1.8.9 解耦；如拉取不到请改用其它可用 tag
-    image: bladex/sentinel-dashboard:1.8.6
+    # 使用国内镜像代理，解决bladex原镜像拉取不到的问题
+    image: docker.1ms.run/bladex/sentinel-dashboard:1.8.6
     container_name: aihub-sentinel
     ports:
       - "8858:8858"
     environment:
       TZ: Asia/Shanghai
+      # 增加登录账号密码，旧镜像默认账号sentinel / sentinel
+      AUTH_USERNAME: sentinel
+      AUTH_PASSWORD: sentinel
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://127.0.0.1:8858 >/dev/null || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 15
+    restart: always
 
   minio:
     # 可选：aihub.storage.type=minio 时才需要（入库原始文件多实例共享）。

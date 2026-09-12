@@ -13,6 +13,11 @@ import java.util.concurrent.atomic.AtomicLong;
  *
  * <p>实例在整条子任务链上共享（AgentTask.subTask 传递同一引用），
  * 因此子 Agent 的消耗也会计入总预算。
+ *
+ * <p><b>AtomicLong 是什么（并发必读）：</b>多个子 Agent 可能在不同线程同时累加 token，
+ * 普通 long 的 usedTokens += delta 不是原子操作（读-改-写三步会互相覆盖）。
+ * AtomicLong 用 CPU 级 CAS 指令保证累加原子且无锁（比 synchronized 快）。
+ * 详见学习文档《05-AI服务-aihub-ai-service.md》。
  */
 public final class AgentBudget {
 

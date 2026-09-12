@@ -30,6 +30,11 @@ import java.util.Arrays;
  *   <li><b>直连本服务（8081）</b>：拦截器要求 X-Tenant-Id 头（/auth 登录除外），
  *       因此下方 customizer 给需要租户上下文的接口补了这两个头参数。</li>
  * </ul>
+ *
+ * <p><b>注解说明：</b>@Configuration 标记配置类；@Bean 方法返回值注册为 Spring Bean
+ * （springdoc-openapi 启动时收集 OpenAPI Bean 渲染文档页、收集 OperationCustomizer Bean
+ * 逐个修饰每个接口的文档描述）。
+ * 详见学习文档《04-平台服务-aihub-platform-service.md》。
  */
 @Configuration
 public class OpenApiConfig {

@@ -23,12 +23,30 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 基于 Spring AI 的对话执行器（ChatExecutor 的 infra 实现）。
+ * 基于 Spring AI 的对话执行器（ChatExecutor 的 infra 实现）—— 对话的"引擎室"。
  *
- * <p>Spring AI 的所有类型被限制在本包内——业务层只依赖 domain 的 ChatExecutor 接口，
- * 将来升级 Spring AI 2.0 时只需改这里。
+ * <p><b>在架构中的位置：</b>domain 定义了 ChatExecutor 接口（"能对话"），
+ * 本类用 Spring AI 实现它。Spring AI 的所有类型被限制在本包内——业务层只依赖
+ * domain 的 ChatExecutor 接口，将来升级 Spring AI 2.0 时只需改这里（防腐层思想）。
  *
- * <p>RAG 集成：应用绑定知识库后，检索 → 注入受限上下文 → 发出 rag.sources 引用事件。
+ * <p><b>同步（call）与流式（stream）的差异：</b>
+ * <ul>
+ *   <li>call()：一次请求等完整响应，适合后端间调用；</li>
+ *   <li>stream()：响应是 Flux（事件流），doOnNext 对每个到达的 token 增量做处理
+ *       （拼全文 + 发 StreamEvent.token 给前端），blockLast() 阻塞等流结束。
+ *       这是"响应式数据源 + 阻塞消费"的混合用法——因为本服务是 MVC（Servlet 线程模型），
+ *       在自建线程池里阻塞是安全的。</li>
+ * </ul>
+ *
+ * <p><b>RAG 是什么（零基础必读）：</b>Retrieval-Augmented Generation，检索增强生成。
+ * 模型不知道你的私有资料，所以在提问前先去向量库"检索"最相关的知识片段，
+ * 拼进提示词让模型"开卷考试"，并用防幻觉约束命令它只依据资料作答。
+ * 见 augment() 方法：查应用绑定的知识库 → 检索 topK 片段 → 拼装受限上下文
+ * → 发 rag.sources 事件（前端渲染引用角标）。
+ *
+ * <p><b>AiCallContext / AuditAdvisor 的 param 传递：</b>租户/应用/场景通过
+ * advisors(a -> a.param(...)) 传给 Advisor 链 —— Advisor 在请求线程里读这些参数写审计日志。
+ * 详见学习文档《05-AI服务-aihub-ai-service.md》。
  */
 @Slf4j
 @Component

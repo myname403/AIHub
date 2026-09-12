@@ -18,7 +18,7 @@ import { login } from '../../common/request.js'
 export default {
   data() {
     return {
-      form: { tenantCode: 'demo', username: 'admin', password: 'admin123' },
+      form: { tenantCode: 'demo', username: 'admin', password: '123456' },
       loading: false,
       error: ''
     }

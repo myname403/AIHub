@@ -8,6 +8,9 @@ spring:
     web-application-type: reactive
   cloud:
     nacos:
+      # 本地开发默认账号（Nacos 3.x 开启了鉴权）。生产环境用环境变量覆盖，不要提交真实密码
+      username: ${NACOS_USERNAME:nacos}
+      password: ${NACOS_PASSWORD:Nacos@aihub123}
       discovery:
         server-addr: ${NACOS_ADDR:127.0.0.1:8848}
         namespace: ${NACOS_NAMESPACE:public}
@@ -21,6 +24,17 @@ spring:
       discovery:
         locator:
           enabled: false
+      # 全局 CORS：前端(5173)与网关(8080)不同源，浏览器会先发 OPTIONS 预检请求，
+      # 不放行预检则所有跨域请求都会被浏览器拦下（登录页表现为"网络错误"）。
+      # allowedOriginPatterns 配合 allowedCredentials 使用；生产环境应收紧为具体域名。
+      globalcors:
+        cors-configurations:
+          '[/**]':
+            allowedOriginPatterns: "*"
+            allowed-methods: "*"
+            allowed-headers: "*"
+            exposed-headers: "X-Trace-Id"
+            maxAge: 3600
       routes:
         - id: aihub-platform
           uri: lb://aihub-platform-service
@@ -41,6 +55,8 @@ spring:
           nacos:
             server-addr: ${NACOS_ADDR:127.0.0.1:8848}
             namespace: ${NACOS_NAMESPACE:public}
+            username: ${NACOS_USERNAME:nacos}
+            password: ${NACOS_PASSWORD:Nacos@aihub123}
             group-id: ${NACOS_GROUP:DEFAULT_GROUP}
             data-id: aihub-gateway-flow-rules
             rule-type: gw-flow

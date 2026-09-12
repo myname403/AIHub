@@ -22,6 +22,13 @@ import java.security.MessageDigest;
  *       而不是连接挂着等到工具调用才神秘失败；</li>
  *   <li>{@code enabled=false} 时整个过滤器直接放行——本地默认形态零行为变化。</li>
  * </ul>
+ *
+ * <p><b>Servlet Filter 是什么：</b>比拦截器（HandlerInterceptor）更靠前的组件 ——
+ * 在请求进入 DispatcherServlet 之前就执行，能拦截静态资源和框架端点（/mcp/** 是
+ * Spring AI MCP 框架注册的端点，不走自己的 Controller，所以必须用 Filter 层）。
+ * {@code OncePerRequestFilter} 是 Spring 的基类：保证一次请求只过滤一次
+ * （Servlet 转发/包含场景下原生 Filter 可能被触发多次）。
+ * 详见学习文档《06-MCP工具三件套.md》。
  */
 public class McpChannelAuthFilter extends OncePerRequestFilter {
 
