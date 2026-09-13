@@ -67,7 +67,7 @@ public class SpringAiChatExecutor implements ChatExecutor {
         AiCallContext.set(turn.tenantId(), turn.appId(), turn.scene(), turn.conversationId());
         long start = System.currentTimeMillis();
         try {
-            ChatClient client = chatClientFactory.create(turn.tenantId(), turn.appId(), turn.scene());
+            ChatClient client = chatClientFactory.create(turn.tenantId(), turn.appId(), turn.scene(), turn.modelCode());
             Augmented augmented = augment(turn, null, new int[]{0});
             org.springframework.ai.chat.model.ChatResponse response = client.prompt()
                     .user(augmented.prompt())
@@ -83,7 +83,7 @@ public class SpringAiChatExecutor implements ChatExecutor {
                     ? "" : response.getResult().getOutput().getText();
             referenceStore.save(turn.tenantId(), turn.conversationId(), augmented.references());
             String modelCode = chatClientFactory.resolvedModelCode(
-                    turn.tenantId(), turn.appId(), turn.scene());
+                    turn.tenantId(), turn.appId(), turn.scene(), turn.modelCode());
             int tokenIn = tokenOf(response, true);
             int tokenOut = tokenOf(response, false);
             aiMetrics.recordChat(turn.scene(), true, cost, modelCode, tokenIn, tokenOut);
@@ -91,7 +91,7 @@ public class SpringAiChatExecutor implements ChatExecutor {
         } catch (RuntimeException e) {
             // 失败也要计数与计时，否则成功率与耗时分位数都是失真的
             aiMetrics.recordChat(turn.scene(), false, System.currentTimeMillis() - start,
-                    chatClientFactory.resolvedModelCode(turn.tenantId(), turn.appId(), turn.scene()),
+                    chatClientFactory.resolvedModelCode(turn.tenantId(), turn.appId(), turn.scene(), turn.modelCode()),
                     0, 0);
             throw e;
         } finally {
@@ -113,7 +113,7 @@ public class SpringAiChatExecutor implements ChatExecutor {
     @Override
     public StreamResult stream(ChatTurn turn, StreamSink sink) {
         AiCallContext.set(turn.tenantId(), turn.appId(), turn.scene(), turn.conversationId());
-        ChatClient client = chatClientFactory.create(turn.tenantId(), turn.appId(), turn.scene());
+        ChatClient client = chatClientFactory.create(turn.tenantId(), turn.appId(), turn.scene(), turn.modelCode());
         String memoryKey = DbChatMemory.key(turn.tenantId(), turn.conversationId());
         long start = System.currentTimeMillis();
         int[] index = {0};
@@ -151,7 +151,7 @@ public class SpringAiChatExecutor implements ChatExecutor {
 
             long cost = System.currentTimeMillis() - start;
             String modelCode = chatClientFactory.resolvedModelCode(
-                    turn.tenantId(), turn.appId(), turn.scene());
+                    turn.tenantId(), turn.appId(), turn.scene(), turn.modelCode());
             // 记忆 Advisor 已在流结束时把助手消息落库，此刻才能把引用挂到该消息上
             referenceStore.save(turn.tenantId(), turn.conversationId(), augmented.references());
             int tokenIn = tokenOf(last[0], true);
@@ -162,7 +162,7 @@ public class SpringAiChatExecutor implements ChatExecutor {
         } catch (Exception e) {
             log.error("流式对话失败 tenant={} conv={}", turn.tenantId(), turn.conversationId(), e);
             aiMetrics.recordChat(turn.scene(), false, System.currentTimeMillis() - start,
-                    chatClientFactory.resolvedModelCode(turn.tenantId(), turn.appId(), turn.scene()),
+                    chatClientFactory.resolvedModelCode(turn.tenantId(), turn.appId(), turn.scene(), turn.modelCode()),
                     0, 0);
             sink.emit(StreamEvent.error(index[0]++,
                     String.valueOf(com.aihub.common.result.ResultCode.MODEL_UNAVAILABLE.getCode()),
@@ -189,9 +189,7 @@ public class SpringAiChatExecutor implements ChatExecutor {
             StringBuilder context = new StringBuilder();
             int ref = 1;
             for (Long kbId : kbIds) {
-                List<RetrievedChunk> chunks = knowledgeRetriever.retrieve(
-                        turn.tenantId(), kbId, turn.userText(),
-                        ragProperties.getTopK(), ragProperties.getSimilarityThreshold());
+                List<RetrievedChunk> chunks = retrieveWithTimeout(turn, kbId);
                 for (RetrievedChunk chunk : chunks) {
                     context.append('[').append(ref).append("] ")
                             .append(chunk.content()).append("\n\n");
@@ -227,6 +225,30 @@ public class SpringAiChatExecutor implements ChatExecutor {
     private record Augmented(String prompt, List<MessageReference> references) {
         static Augmented plain(String prompt) {
             return new Augmented(prompt, List.of());
+        }
+    }
+
+    /**
+     * 带超时保护的检索（3 秒）。超时/失败一律返回空列表 → 上层降级为普通对话。
+     *
+     * <p><b>为什么要超时（本期真实事故）：</b>检索前需要先调用<b>嵌入模型</b>把问题向量化；
+     * 未配置嵌入模型时 Spring AI 默认连 api.openai.com，网络不通会无限阻塞，
+     * 导致绑定过知识库的应用（如种子应用 9001）所有对话都卡在"思考中"。
+     * AI 主链路绝不能被可选能力（RAG）拖死——降级放行是硬性要求。
+     */
+    private List<RetrievedChunk> retrieveWithTimeout(ChatTurn turn, Long kbId) {
+        try {
+            return java.util.concurrent.CompletableFuture
+                    .supplyAsync(() -> knowledgeRetriever.retrieve(
+                            turn.tenantId(), kbId, turn.userText(),
+                            ragProperties.getTopK(), ragProperties.getSimilarityThreshold()))
+                    .get(3, java.util.concurrent.TimeUnit.SECONDS);
+        } catch (java.util.concurrent.TimeoutException e) {
+            log.warn("RAG 检索超时（3s），降级为普通对话 kb={}", kbId);
+            return List.of();
+        } catch (Exception e) {
+            log.warn("RAG 检索失败，降级为普通对话 kb={} err={}", kbId, e.getMessage());
+            return List.of();
         }
     }
 }

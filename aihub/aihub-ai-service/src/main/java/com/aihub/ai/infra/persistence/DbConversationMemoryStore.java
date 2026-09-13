@@ -2,7 +2,7 @@ package com.aihub.ai.infra.persistence;
 
 import com.aihub.ai.domain.model.ChatMessage;
 import com.aihub.ai.domain.spi.ConversationMemoryStore;
-import com.aihub.ai.infra.persistence.do_.AiMessageDO;
+import com.aihub.ai.infra.persistence.dataobject.AiMessageDO;
 import com.aihub.ai.infra.persistence.mapper.AiMessageMapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import lombok.RequiredArgsConstructor;

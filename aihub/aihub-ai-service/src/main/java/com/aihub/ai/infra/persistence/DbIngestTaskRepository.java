@@ -2,7 +2,7 @@ package com.aihub.ai.infra.persistence;
 
 import com.aihub.ai.domain.model.IngestTask;
 import com.aihub.ai.domain.spi.IngestTaskRepository;
-import com.aihub.ai.infra.persistence.do_.AiIngestTaskDO;
+import com.aihub.ai.infra.persistence.dataobject.AiIngestTaskDO;
 import com.aihub.ai.infra.persistence.mapper.AiIngestTaskMapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import lombok.RequiredArgsConstructor;

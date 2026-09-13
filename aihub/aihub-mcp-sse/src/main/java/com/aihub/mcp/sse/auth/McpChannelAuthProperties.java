@@ -1,5 +1,6 @@
 package com.aihub.mcp.sse.auth;
 
+import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import java.util.List;
@@ -17,6 +18,7 @@ import java.util.List;
  * 而不是「一条连接切多个租户」。多租户共享实例需按会话传递 Key，
  * 待 MCP 客户端生态支持 headers 透传后再演进（见 README 遗留清单）。
  */
+@Data
 @ConfigurationProperties(prefix = "aihub.mcp.auth")
 public class McpChannelAuthProperties {
 
@@ -31,28 +33,4 @@ public class McpChannelAuthProperties {
      * 与 application.yml 的 sse-endpoint / sse-message-endpoint / streamable mcp-endpoint 对齐。
      */
     private List<String> protectedPaths = List.of("/sse", "/mcp/message", "/mcp");
-
-    public boolean isEnabled() {
-        return enabled;
-    }
-
-    public void setEnabled(boolean enabled) {
-        this.enabled = enabled;
-    }
-
-    public String getToken() {
-        return token;
-    }
-
-    public void setToken(String token) {
-        this.token = token;
-    }
-
-    public List<String> getProtectedPaths() {
-        return protectedPaths;
-    }
-
-    public void setProtectedPaths(List<String> protectedPaths) {
-        this.protectedPaths = protectedPaths;
-    }
 }

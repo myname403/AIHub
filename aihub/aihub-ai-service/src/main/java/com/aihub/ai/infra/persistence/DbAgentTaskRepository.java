@@ -2,8 +2,8 @@ package com.aihub.ai.infra.persistence;
 
 import com.aihub.ai.domain.model.AgentTask;
 import com.aihub.ai.domain.spi.AgentTaskRepository;
-import com.aihub.ai.infra.persistence.do_.AiAgentStepDO;
-import com.aihub.ai.infra.persistence.do_.AiAgentTaskDO;
+import com.aihub.ai.infra.persistence.dataobject.AiAgentStepDO;
+import com.aihub.ai.infra.persistence.dataobject.AiAgentTaskDO;
 import com.aihub.ai.infra.persistence.mapper.AiAgentStepMapper;
 import com.aihub.ai.infra.persistence.mapper.AiAgentTaskMapper;
 import com.fasterxml.jackson.databind.ObjectMapper;

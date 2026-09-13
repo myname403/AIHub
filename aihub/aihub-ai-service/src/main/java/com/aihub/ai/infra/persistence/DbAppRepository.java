@@ -2,8 +2,8 @@ package com.aihub.ai.infra.persistence;
 
 import com.aihub.ai.domain.model.App;
 import com.aihub.ai.domain.spi.AppRepository;
-import com.aihub.ai.infra.persistence.do_.AiAppDO;
-import com.aihub.ai.infra.persistence.do_.AiAppKbDO;
+import com.aihub.ai.infra.persistence.dataobject.AiAppDO;
+import com.aihub.ai.infra.persistence.dataobject.AiAppKbDO;
 import com.aihub.ai.infra.persistence.mapper.AiAppKbMapper;
 import com.aihub.ai.infra.persistence.mapper.AiAppMapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;

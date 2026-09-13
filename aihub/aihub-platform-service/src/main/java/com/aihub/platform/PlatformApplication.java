@@ -39,8 +39,11 @@ import org.springframework.cloud.client.discovery.EnableDiscoveryClient;
 // "required a bean of type '...Mapper' that could not be found"）
 @MapperScan({"com.aihub.platform.user.mapper",
         "com.aihub.platform.apikey.mapper",
-        "com.aihub.platform.quota.mapper"})
-@SpringBootApplication
+        "com.aihub.platform.quota.mapper",
+        "com.aihub.platform.system.mapper"})
+// scanBasePackages 扩大到 com.aihub：让 common 模块的 GlobalExceptionHandler 也被扫描注册，
+// 否则 BizException 会变成原生 500 而不是 {"code":10001,...} 的统一响应体
+@SpringBootApplication(scanBasePackages = "com.aihub")
 public class PlatformApplication {
 
     public static void main(String[] args) {

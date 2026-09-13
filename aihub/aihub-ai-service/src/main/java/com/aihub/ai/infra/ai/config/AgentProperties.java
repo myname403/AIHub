@@ -1,5 +1,6 @@
 package com.aihub.ai.infra.ai.config;
 
+import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
@@ -15,6 +16,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * <p>因此本类必须保持「可变 JavaBean」风格：record / 构造器绑定的不可变对象
  * 无法被重绑定（rebind 走的是 setter），写成不可变类会静默失去热更新能力。
  */
+@Data
 @ConfigurationProperties(prefix = "aihub.agent")
 public class AgentProperties {
 
@@ -32,46 +34,11 @@ public class AgentProperties {
 
     private final Browser browser = new Browser();
 
-    public int getMaxSubTasks() {
-        return maxSubTasks;
-    }
-
-    public void setMaxSubTasks(int maxSubTasks) {
-        this.maxSubTasks = maxSubTasks;
-    }
-
-    public long getMaxTokens() {
-        return maxTokens;
-    }
-
-    public void setMaxTokens(long maxTokens) {
-        this.maxTokens = maxTokens;
-    }
-
-    public long getTimeoutMs() {
-        return timeoutMs;
-    }
-
-    public void setTimeoutMs(long timeoutMs) {
-        this.timeoutMs = timeoutMs;
-    }
-
-    public Browser getBrowser() {
-        return browser;
-    }
-
     /** 浏览器 Agent 独有的步数预算（aihub.agent.browser.max-steps） */
+    @Data
     public static class Browser {
 
         /** 浏览器 Agent 单任务最大决策步数 */
         private int maxSteps = 8;
-
-        public int getMaxSteps() {
-            return maxSteps;
-        }
-
-        public void setMaxSteps(int maxSteps) {
-            this.maxSteps = maxSteps;
-        }
     }
 }

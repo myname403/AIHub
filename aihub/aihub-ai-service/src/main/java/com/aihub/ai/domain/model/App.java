@@ -1,10 +1,14 @@
 package com.aihub.ai.domain.model;
 
+import lombok.Data;
+
 /**
  * 应用（助手）领域实体。
  *
  * <p>领域层约束：不依赖任何框架（Spring AI / MyBatis / Redis 均不可出现在 domain 包）。
+ * Lombok 属于编译期代码生成，不会给字节码引入任何依赖，因此领域层可用。
  */
+@Data
 public class App {
 
     /** Agent 策略取值（与 ai_app.agent_strategy 保持一致） */
@@ -54,77 +58,5 @@ public class App {
         if (status == null) {
             status = 1;
         }
-    }
-
-    public Long getId() {
-        return id;
-    }
-
-    public void setId(Long id) {
-        this.id = id;
-    }
-
-    public Long getTenantId() {
-        return tenantId;
-    }
-
-    public void setTenantId(Long tenantId) {
-        this.tenantId = tenantId;
-    }
-
-    public String getName() {
-        return name;
-    }
-
-    public void setName(String name) {
-        this.name = name;
-    }
-
-    public String getAgentStrategy() {
-        return agentStrategy;
-    }
-
-    public void setAgentStrategy(String agentStrategy) {
-        this.agentStrategy = agentStrategy;
-    }
-
-    public String getMemoryPolicy() {
-        return memoryPolicy;
-    }
-
-    public void setMemoryPolicy(String memoryPolicy) {
-        this.memoryPolicy = memoryPolicy;
-    }
-
-    public String getSystemPrompt() {
-        return systemPrompt;
-    }
-
-    public void setSystemPrompt(String systemPrompt) {
-        this.systemPrompt = systemPrompt;
-    }
-
-    public Long getModelRouteId() {
-        return modelRouteId;
-    }
-
-    public void setModelRouteId(Long modelRouteId) {
-        this.modelRouteId = modelRouteId;
-    }
-
-    public Double getTemperature() {
-        return temperature;
-    }
-
-    public void setTemperature(Double temperature) {
-        this.temperature = temperature;
-    }
-
-    public Integer getStatus() {
-        return status;
-    }
-
-    public void setStatus(Integer status) {
-        this.status = status;
     }
 }

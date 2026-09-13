@@ -4,6 +4,12 @@ server:
 spring:
   application:
     name: aihub-ai-service
+  # NDJSON/SSE 流式对话走 MVC 异步请求（StreamingResponseBody）。
+  # Tomcat 异步默认 30 秒超时——大模型生成超过 30 秒就会被容器掐断，
+  # 前端表现为回答中途报"模型调用失败"。这里放宽到 5 分钟。
+  mvc:
+    async:
+      request-timeout: 300000
   datasource:
     url: jdbc:mysql://${MYSQL_HOST:127.0.0.1}:${MYSQL_PORT:3307}/${MYSQL_DB_AI:aihub_ai}?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
     username: ${MYSQL_USER:root}
@@ -86,19 +92,33 @@ spring.ai:
       request-timeout: 30s
       toolcallback:
         enabled: ${AI_MCP_TOOLCALLBACK_ENABLED:true}
+      # ===== 本地 MCP Server（阶段 2 接入，全部免 Key）=====
+      # Windows 关键经验：
+      #   ① 不要用 npx/cmd 包装——进程 spawn 层多一层就多一坑（stdio 握手超时），
+      #      直接用 node.exe 跑包的入口 JS（包已装在 E:\aihub\mcp-servers，npx 缓存路径是哈希不可靠）；
+      #   ② Node 用绝对路径（系统 PATH 里是 Node16，跑不动新版 MCP Server）；
+      #   ③ 参数避免中文路径（stdio 子进程 GBK/UTF-8 乱码风险），工作区固定 E:\aihub-workspace。
+      # 更新 MCP 包：在 E:\aihub\mcp-servers 下 npm install <pkg> 后重启本服务。
+      stdio:
+        connections:
+          filesystem:
+            command: D:\uilts\nvm\v24.14.0\node.exe
+            args:
+              - E:\aihub\mcp-servers\node_modules\@modelcontextprotocol\server-filesystem\dist\index.js
+              - E:\aihub-workspace
+          sequential-thinking:
+            command: D:\uilts\nvm\v24.14.0\node.exe
+            args:
+              - E:\aihub\mcp-servers\node_modules\@modelcontextprotocol\server-sequential-thinking\dist\index.js
+          web-fetch:
+            command: D:\uilts\nvm\v24.14.0\node.exe
+            args:
+              - E:\aihub\mcp-servers\node_modules\@kazuph\mcp-fetch\dist\index.js
       # 用法示例（按需取消注释并填入真实地址）：
       # sse:
       #   connections:
       #     fetch:
       #       url: http://127.0.0.1:8931/sse
-      # stdio:
-      #   connections:
-      #     filesystem:
-      #       command: npx
-      #       args:
-      #         - -y
-      #         - '@modelcontextprotocol/server-filesystem'
-      #         - .
 
 mybatis-plus:
   configuration:

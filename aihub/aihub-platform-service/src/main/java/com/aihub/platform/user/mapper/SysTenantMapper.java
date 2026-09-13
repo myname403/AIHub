@@ -1,6 +1,6 @@
 package com.aihub.platform.user.mapper;
 
-import com.aihub.platform.tenant.entity.SysTenant;
+import com.aihub.platform.tenant.entity.SysTenantDO;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 
 /**
@@ -8,5 +8,5 @@ import com.baomidou.mybatisplus.core.mapper.BaseMapper;
  * （selectById 查租户、insert 建租户等），无需手写 SQL。
  * 详见学习文档《04-平台服务-aihub-platform-service.md》。
  */
-public interface SysTenantMapper extends BaseMapper<SysTenant> {
+public interface SysTenantMapper extends BaseMapper<SysTenantDO> {
 }

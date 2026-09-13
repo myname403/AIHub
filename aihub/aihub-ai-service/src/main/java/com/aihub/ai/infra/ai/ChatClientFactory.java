@@ -77,7 +77,11 @@ public class ChatClientFactory {
     private String dataKey;
 
     private static final String DEFAULT_SYSTEM_PROMPT =
-            "你是 AIHub 智能助手，请用简体中文回答，回答需准确、简洁。";
+            "你是 AIHub 智能助手，请用简体中文回答，回答需准确、简洁。"
+                    + "普通问题直接回答，不要调用任何工具。"
+                    + "仅当用户明确要求读取/写入/列出文件时，才使用文件工具，"
+                    + "且工作目录固定为 E:\\aihub-workspace（调用时必须使用该目录下的完整绝对路径，"
+                    + "如 E:\\aihub-workspace\\hello.txt；目录之外的路径会被拒绝）。";
 
     private final Map<String, CacheEntry> cache = new ConcurrentHashMap<>();
 
@@ -118,7 +122,17 @@ public class ChatClientFactory {
      * 注意缓存 key 是 (tenant, app, scene) 三元组拼接的字符串。
      */
     public ChatClient create(Long tenantId, Long appId, String scene) {
-        String key = tenantId + ":" + appId + ":" + scene;
+        return create(tenantId, appId, scene, null);
+    }
+
+    /**
+     * 获取（或装配）ChatClient，支持<b>指定模型覆盖</b>。
+     *
+     * @param modelCode 前端模型切换器指定的模型编码；为空走管理端场景路由。
+     *                  缓存 key 把 modelCode 也编进去：同一个租户不同模型的 Client 各自缓存互不污染。
+     */
+    public ChatClient create(Long tenantId, Long appId, String scene, String modelCode) {
+        String key = cacheKey(tenantId, appId, scene, modelCode);
         CacheEntry entry = cache.get(key);
         long now = System.currentTimeMillis();
         // 每次都读当前 TTL：Nacos 重绑定后，下一次过期判断即用新值（惰性生效）
@@ -127,7 +141,7 @@ public class ChatClientFactory {
             synchronized (cache) {
                 entry = cache.get(key);
                 if (entry == null || now - entry.createdAt() > ttlMillis) {
-                    entry = build(tenantId, appId, scene);
+                    entry = build(tenantId, appId, scene, modelCode);
                     cache.put(key, entry);
                 }
             }
@@ -137,20 +151,45 @@ public class ChatClientFactory {
 
     /** 最近一次装配使用的模型编码（用于事件帧与用量记录） */
     public String resolvedModelCode(Long tenantId, Long appId, String scene) {
-        CacheEntry entry = cache.get(tenantId + ":" + appId + ":" + scene);
+        return resolvedModelCode(tenantId, appId, scene, null);
+    }
+
+    public String resolvedModelCode(Long tenantId, Long appId, String scene, String modelCode) {
+        CacheEntry entry = cache.get(cacheKey(tenantId, appId, scene, modelCode));
         return entry == null ? "" : entry.modelCode();
     }
 
-    private CacheEntry build(Long tenantId, Long appId, String scene) {
-        ChatModel chatModel = resolveModel(tenantId, scene);
-        String modelCode = currentModelCode(tenantId, scene);
+    /** 缓存 key：三元组 + 可选模型码。modelCode 恒定放在第 4 段（可为空串） */
+    private String cacheKey(Long tenantId, Long appId, String scene, String modelCode) {
+        return tenantId + ":" + appId + ":" + scene + ":" + (modelCode == null ? "" : modelCode);
+    }
+
+    private CacheEntry build(Long tenantId, Long appId, String scene, String overrideModelCode) {
+        ResolvedModel resolved;
+        if (StringUtils.hasText(overrideModelCode)) {
+            // 指定模型：直接按编码解析端点（绕过场景路由）。找不到即明确报错
+            var endpoint = configRepository.findEndpoint(tenantId, overrideModelCode)
+                    .orElseThrow(() -> new BizException(ResultCode.MODEL_UNAVAILABLE,
+                            "指定模型不可用：" + overrideModelCode));
+            resolved = new ResolvedModel(resolver.build(endpoint, dataKey),
+                    endpoint.providerCode(), overrideModelCode);
+        } else {
+            resolved = resolveModel(tenantId, scene);
+        }
+        String modelCode = resolved.modelCode();
 
         String systemPrompt = appRepository.find(tenantId, appId)
                 .map(App::getSystemPrompt)
                 .filter(StringUtils::hasText)
                 .orElse(DEFAULT_SYSTEM_PROMPT);
+        // Ollama 的推理模型（qwen3/qwen3.5）默认把回答输出到 reasoning 字段、content 恒为空，
+        // Spring AI 读不到内容。/no_think 是 Qwen3 系列的官方软开关（写进系统提示词即关闭思考链），
+        // 仅对 Ollama 供应商追加；DeepSeek 等云供应商不受影响。
+        if ("ollama".equals(resolved.providerCode())) {
+            systemPrompt = systemPrompt + " /no_think";
+        }
 
-        ChatClient client = ChatClient.builder(chatModel)
+        ChatClient client = ChatClient.builder(resolved.chatModel())
                 .defaultSystem(systemPrompt)
                 .defaultAdvisors(
                         MessageChatMemoryAdvisor.builder(chatMemory).build(),
@@ -194,10 +233,16 @@ public class ChatClientFactory {
         return callbacks;
     }
 
-    /** 主模型优先，失败自动降级到备用模型，两者皆缺则用 Spring Boot 自动装配的默认模型 */
-    private ChatModel resolveModel(Long tenantId, String scene) {
+    /** 解析结果：ChatModel + 供应商编码（Ollama 特殊处理用）+ 实际使用的模型编码（用量/事件帧用） */
+    private record ResolvedModel(ChatModel chatModel, String providerCode, String modelCode) {
+    }
+
+    /**
+     * 主模型优先，失败自动降级到备用模型，两者皆缺则用 Spring Boot 自动装配的默认模型。
+     * 返回供应商编码与实际选中的模型编码。
+     */
+    private ResolvedModel resolveModel(Long tenantId, String scene) {
         ModelRoute route = modelGateway.routeFor(tenantId, scene);
-        ChatModel lastError = null;
         for (String code : new String[]{route.primaryModelCode(), route.fallbackModelCode()}) {
             if (!StringUtils.hasText(code)) {
                 continue;
@@ -207,7 +252,8 @@ public class ChatClientFactory {
                 continue;
             }
             try {
-                return resolver.build(endpoint.get(), dataKey);
+                return new ResolvedModel(resolver.build(endpoint.get(), dataKey),
+                        endpoint.get().providerCode(), code);
             } catch (Exception e) {
                 log.warn("模型构建失败，尝试降级 model={}", code, e);
             }
@@ -216,19 +262,6 @@ public class ChatClientFactory {
         if (fallback == null) {
             throw new BizException(ResultCode.MODEL_UNAVAILABLE, "无可用模型（请配置 ai_model / spring.ai.openai）");
         }
-        return fallback;
-    }
-
-    private String currentModelCode(Long tenantId, String scene) {
-        ModelRoute route = modelGateway.routeFor(tenantId, scene);
-        if (StringUtils.hasText(route.primaryModelCode())
-                && configRepository.findEndpoint(tenantId, route.primaryModelCode()).isPresent()) {
-            return route.primaryModelCode();
-        }
-        if (StringUtils.hasText(route.fallbackModelCode())
-                && configRepository.findEndpoint(tenantId, route.fallbackModelCode()).isPresent()) {
-            return route.fallbackModelCode();
-        }
-        return route.primaryModelCode();
+        return new ResolvedModel(fallback, null, route.primaryModelCode());
     }
 }

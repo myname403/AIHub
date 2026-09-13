@@ -8,7 +8,7 @@ import com.aihub.platform.quota.entity.AiUsageRecordDO;
 import com.aihub.platform.quota.mapper.AiQuotaPolicyMapper;
 import com.aihub.platform.quota.mapper.AiQuotaUsageMapper;
 import com.aihub.platform.quota.mapper.AiUsageRecordMapper;
-import com.aihub.platform.tenant.entity.SysTenant;
+import com.aihub.platform.tenant.entity.SysTenantDO;
 import com.aihub.platform.user.mapper.SysTenantMapper;
 import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
@@ -59,7 +59,7 @@ public class QuotaService {
 
     /** 租户有效性校验（对应 PlatformClient.checkTenant）：存在 + 状态=1 才算有效 */
     public Optional<PlatformClient.TenantBrief> checkTenant(Long tenantId) {
-        SysTenant tenant = tenantMapper.selectById(tenantId);
+        SysTenantDO tenant = tenantMapper.selectById(tenantId);
         if (tenant == null || tenant.getStatus() == null || tenant.getStatus() != 1) {
             return Optional.empty();
         }

@@ -1,5 +1,6 @@
 package com.aihub.ai.infra.storage;
 
+import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
@@ -11,7 +12,11 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  *   <li>{@code minio}——S3 协议对象存储（MinIO / 各云厂商兼容网关），
  *       多实例部署时共享原始文件，失败重试不再依赖「请求恰好落回存文件的节点」。</li>
  * </ul>
+ *
+ * <p>Lombok 说明：外层 {@code minio} 字段是 final 的，@Data 只为它生成 getter
+ * （嵌套对象由 Spring 绑定器直接填充内部字段），其余可变字段照常生成读写方法。
  */
+@Data
 @ConfigurationProperties(prefix = "aihub.storage")
 public class StorageProperties {
 
@@ -20,19 +25,8 @@ public class StorageProperties {
 
     private final Minio minio = new Minio();
 
-    public String getType() {
-        return type;
-    }
-
-    public void setType(String type) {
-        this.type = type;
-    }
-
-    public Minio getMinio() {
-        return minio;
-    }
-
     /** S3 协议连接参数（type=minio 时生效） */
+    @Data
     public static class Minio {
 
         /** S3 API 地址（MinIO 默认 9000 端口；控制台是 9001，别填混） */
@@ -44,37 +38,5 @@ public class StorageProperties {
 
         /** 入库文件桶名；不存在会在首次使用时自动创建 */
         private String bucket = "aihub-ingest";
-
-        public String getEndpoint() {
-            return endpoint;
-        }
-
-        public void setEndpoint(String endpoint) {
-            this.endpoint = endpoint;
-        }
-
-        public String getAccessKey() {
-            return accessKey;
-        }
-
-        public void setAccessKey(String accessKey) {
-            this.accessKey = accessKey;
-        }
-
-        public String getSecretKey() {
-            return secretKey;
-        }
-
-        public void setSecretKey(String secretKey) {
-            this.secretKey = secretKey;
-        }
-
-        public String getBucket() {
-            return bucket;
-        }
-
-        public void setBucket(String bucket) {
-            this.bucket = bucket;
-        }
     }
 }

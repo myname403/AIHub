@@ -10,8 +10,15 @@ import { getToken } from './request.js'
  * 两端均按 \n 切分事件帧并处理半包，回调 onEvent(事件帧对象)。
  * 事件类型：msg.start / token / rag.sources / agent.step / artifact / msg.end / error
  */
-export function streamChat({ appId = 0, conversationId = '', message, scene }, onEvent) {
-  const body = JSON.stringify({ appId, conversationId, message, scene })
+export function streamChat({ appId = 0, conversationId = '', message, scene, modelCode = '' }, onEvent) {
+  // modelCode 可选：前端模型切换器指定时后端优使用该模型，空 = 走管理端场景路由
+  const body = JSON.stringify({
+    appId,
+    conversationId,
+    message,
+    scene,
+    ...(modelCode ? { modelCode } : {})
+  })
   const header = {
     'Content-Type': 'application/json',
     Authorization: 'Bearer ' + getToken()

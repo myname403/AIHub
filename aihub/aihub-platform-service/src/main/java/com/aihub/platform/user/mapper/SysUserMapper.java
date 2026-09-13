@@ -1,6 +1,6 @@
 package com.aihub.platform.user.mapper;
 
-import com.aihub.platform.user.entity.SysUser;
+import com.aihub.platform.user.entity.SysUserDO;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import org.apache.ibatis.annotations.Select;
 
@@ -15,12 +15,12 @@ import org.apache.ibatis.annotations.Select;
  * （参数安全注入，防 SQL 注入；与 ${} 的字符串拼接有本质区别，永不用 ${} 拼用户输入）。
  * 详见学习文档《04-平台服务-aihub-platform-service.md》。
  */
-public interface SysUserMapper extends BaseMapper<SysUser> {
+public interface SysUserMapper extends BaseMapper<SysUserDO> {
 
     /**
      * 按 租户+用户名 查用户（登录用）。
      * deleted=0 手动带逻辑删除条件：@Select 原生 SQL 不会自动加 @TableLogic 过滤。
      */
     @Select("select * from sys_user where tenant_id = #{tenantId} and username = #{username} and deleted = 0 limit 1")
-    SysUser selectByTenantAndUsername(Long tenantId, String username);
+    SysUserDO selectByTenantAndUsername(Long tenantId, String username);
 }

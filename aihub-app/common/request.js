@@ -4,13 +4,13 @@ import config from './config.js'
  * 登录：网关 /auth/login（免鉴权）
  * 成功后返回 JWT，后续请求以 Authorization: Bearer <token> 携带。
  */
-export function login({ tenantCode, username, password }) {
+export function login({ tenantCode, username, password, captchaId, captchaCode }) {
   return new Promise((resolve, reject) => {
     uni.request({
       url: config.baseUrl + '/auth/login',
       method: 'POST',
       header: { 'Content-Type': 'application/json' },
-      data: { tenantCode, username, password },
+      data: { tenantCode, username, password, captchaId, captchaCode },
       success: (res) => {
         if (res.statusCode === 200 && res.data && res.data.code === 0) {
           uni.setStorageSync('token', res.data.data.token)

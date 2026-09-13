@@ -45,7 +45,9 @@ import org.springframework.cloud.openfeign.EnableFeignClients;
 @EnableDiscoveryClient
 @EnableFeignClients(basePackages = "com.aihub.api")
 @MapperScan("com.aihub.ai.infra.persistence.mapper")
-@SpringBootApplication
+// scanBasePackages 扩大到 com.aihub：让 common 的 GlobalExceptionHandler 接管业务异常，
+// 统一返回 {"code":xxx} 响应体而不是原生 500
+@SpringBootApplication(scanBasePackages = "com.aihub")
 public class AiServiceApplication {
 
     public static void main(String[] args) {

@@ -77,7 +77,8 @@ public class AgentWebSocketHandler extends TextWebSocketHandler {
                     node.path("conversationId").asText(
                             UUID.randomUUID().toString().replace("-", "").substring(0, 16)),
                     node.path("message").asText(""),
-                    node.path("scene").asText("agent"));
+                    node.path("scene").asText("agent"),
+                    null);
 
             // 每个 WS 消息视为一条链路：先在本线程设置 traceId，再由 wrap 带到工作线程
             TraceContext.set(TraceContext.newTraceId());

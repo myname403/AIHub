@@ -186,13 +186,17 @@ public class ChatController {
                 request.getAppId() == null ? 0L : request.getAppId(),
                 conversationId,
                 request.getMessage(),
-                request.getScene() == null ? "chat" : request.getScene());
+                request.getScene() == null ? "chat" : request.getScene(),
+                request.getModelCode() == null || request.getModelCode().isBlank()
+                        ? null : request.getModelCode());
     }
 
     @Data
     public static class ChatRequest {
         /** 应用（助手）ID，未指定时走默认配置 */
         private Long appId;
+        /** 可选：指定模型编码（前端模型切换器），空 = 走管理端场景路由 */
+        private String modelCode;
         /** 会话 ID，不传则新建 */
         private String conversationId;
         @NotBlank(message = "消息内容不能为空")

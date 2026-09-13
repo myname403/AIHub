@@ -13,6 +13,12 @@
       }
     },
     {
+      "path": "pages/register/register",
+      "style": {
+        "navigationBarTitleText": "注册新企业"
+      }
+    },
+    {
       "path": "pages/kb/kb",
       "style": {
         "navigationBarTitleText": "知识库管理"

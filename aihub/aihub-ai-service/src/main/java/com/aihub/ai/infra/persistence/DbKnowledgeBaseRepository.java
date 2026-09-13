@@ -2,7 +2,7 @@ package com.aihub.ai.infra.persistence;
 
 import com.aihub.ai.domain.model.DocumentInfo;
 import com.aihub.ai.domain.spi.KnowledgeBaseRepository;
-import com.aihub.ai.infra.persistence.do_.AiKnowledgeBaseDO;
+import com.aihub.ai.infra.persistence.dataobject.AiKnowledgeBaseDO;
 import com.aihub.ai.infra.persistence.mapper.AiKnowledgeBaseMapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import lombok.RequiredArgsConstructor;

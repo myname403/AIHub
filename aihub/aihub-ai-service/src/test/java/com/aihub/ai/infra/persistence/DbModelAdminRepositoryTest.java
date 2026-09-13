@@ -2,9 +2,9 @@ package com.aihub.ai.infra.persistence;
 
 import com.aihub.ai.domain.model.ModelCommand;
 import com.aihub.ai.domain.model.ModelInfo;
-import com.aihub.ai.infra.persistence.do_.AiModelDO;
-import com.aihub.ai.infra.persistence.do_.AiModelProviderDO;
-import com.aihub.ai.infra.persistence.do_.AiModelRouteDO;
+import com.aihub.ai.infra.persistence.dataobject.AiModelDO;
+import com.aihub.ai.infra.persistence.dataobject.AiModelProviderDO;
+import com.aihub.ai.infra.persistence.dataobject.AiModelRouteDO;
 import com.aihub.ai.infra.persistence.mapper.AiModelMapper;
 import com.aihub.ai.infra.persistence.mapper.AiModelProviderMapper;
 import com.aihub.ai.infra.persistence.mapper.AiModelRouteMapper;

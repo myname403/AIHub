@@ -45,6 +45,8 @@ public class WebMvcConfig implements WebMvcConfigurer {
         executor.setThreadNamePrefix("aihub-async-");
         executor.initialize();
         configurer.setTaskExecutor(executor);
-        configurer.setDefaultTimeout(120_000L);
+        // 异步请求超时：NDJSON/SSE 流式回答的生成时间可能超过 1 分钟（本地小模型 CPU 推理尤甚），
+        // 默认 120 秒会在长回答中途掐断连接（前端表现为"模型调用失败"）。放宽到 5 分钟。
+        configurer.setDefaultTimeout(300_000L);
     }
 }

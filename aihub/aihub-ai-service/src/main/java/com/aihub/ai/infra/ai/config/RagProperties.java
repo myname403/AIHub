@@ -1,5 +1,6 @@
 package com.aihub.ai.infra.ai.config;
 
+import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
@@ -14,6 +15,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * <p>与 {@code @Value} 相比还有一个隐性收益：键名集中、有类型校验，
  * 配错单位（如把阈值写成百分数 60）时启动即暴露，而不是运行时才异常。
  */
+@Data
 @ConfigurationProperties(prefix = "aihub.rag")
 public class RagProperties {
 
@@ -22,20 +24,4 @@ public class RagProperties {
 
     /** 相似度阈值，低于该分数的片段不进入模型上下文（0~1） */
     private double similarityThreshold = 0.6;
-
-    public int getTopK() {
-        return topK;
-    }
-
-    public void setTopK(int topK) {
-        this.topK = topK;
-    }
-
-    public double getSimilarityThreshold() {
-        return similarityThreshold;
-    }
-
-    public void setSimilarityThreshold(double similarityThreshold) {
-        this.similarityThreshold = similarityThreshold;
-    }
 }

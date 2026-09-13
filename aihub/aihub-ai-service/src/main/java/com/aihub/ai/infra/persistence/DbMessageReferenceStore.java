@@ -3,7 +3,7 @@ package com.aihub.ai.infra.persistence;
 import com.aihub.ai.domain.model.ChatMessage;
 import com.aihub.ai.domain.model.MessageReference;
 import com.aihub.ai.domain.spi.MessageReferenceStore;
-import com.aihub.ai.infra.persistence.do_.AiMessageReferenceDO;
+import com.aihub.ai.infra.persistence.dataobject.AiMessageReferenceDO;
 import com.aihub.ai.infra.persistence.mapper.AiMessageMapper;
 import com.aihub.ai.infra.persistence.mapper.AiMessageReferenceMapper;
 import lombok.RequiredArgsConstructor;

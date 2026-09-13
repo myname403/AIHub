@@ -2,7 +2,7 @@ package com.aihub.ai.infra.persistence;
 
 import com.aihub.ai.domain.model.ArtifactInfo;
 import com.aihub.ai.domain.spi.ArtifactStore;
-import com.aihub.ai.infra.persistence.do_.AiArtifactDO;
+import com.aihub.ai.infra.persistence.dataobject.AiArtifactDO;
 import com.aihub.ai.infra.persistence.mapper.AiArtifactMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

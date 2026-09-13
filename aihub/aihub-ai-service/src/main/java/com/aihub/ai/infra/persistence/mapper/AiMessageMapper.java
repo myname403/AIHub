@@ -1,12 +1,18 @@
 package com.aihub.ai.infra.persistence.mapper;
 
-import com.aihub.ai.infra.persistence.do_.AiMessageDO;
+import com.aihub.ai.infra.persistence.dataobject.AiMessageDO;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 
 import java.util.List;
 
+/**
+ * ai_message 表 Mapper —— 对话消息历史。
+ *
+ * <p>继承 {@link BaseMapper} 获得通用 CRUD；下方 {@code @Select} 方法
+ * 为文本块（text block）写法的原生 SQL，全部带 tenant_id 条件做租户隔离。
+ */
 public interface AiMessageMapper extends BaseMapper<AiMessageDO> {
 
     /** 按字符串会话键查询（推荐路径） */

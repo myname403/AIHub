@@ -22,7 +22,7 @@ import java.io.Serializable;
  * }</pre>
  *
  * <p><b>泛型说明：</b>{@code R<T>} 中的 T 是业务数据的类型。比如登录接口返回
- * {@code R<Map<String,Object>>}（data 是一个 Map），查询用户列表返回 {@code R<List<SysUser>>}。
+ * {@code R<Map<String,Object>>}（data 是一个 Map），查询用户列表返回 {@code R<List<SysUserDO>>}。
  * 泛型只在编译期生效，运行时会被"擦除"，不影响性能。
  *
  * <p><b>使用方式：</b>Controller 方法里不要手动 new 本类（构造器是 private 的），

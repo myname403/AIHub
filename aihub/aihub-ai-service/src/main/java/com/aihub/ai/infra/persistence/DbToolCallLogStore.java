@@ -1,7 +1,7 @@
 package com.aihub.ai.infra.persistence;
 
 import com.aihub.ai.domain.spi.ToolCallLogStore;
-import com.aihub.ai.infra.persistence.do_.AiToolCallLogDO;
+import com.aihub.ai.infra.persistence.dataobject.AiToolCallLogDO;
 import com.aihub.ai.infra.persistence.mapper.AiToolCallLogMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

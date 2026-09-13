@@ -65,6 +65,16 @@ public final class TenantContext {
         return USER.get();
     }
 
+    /** 必须存在的用户 ID：要求"登录用户"身份的接口用（API Key 调用没有用户，会抛未认证） */
+    public static Long requireUserId() {
+        Long id = USER.get();
+        if (id == null) {
+            throw new com.aihub.common.exception.BizException(
+                    com.aihub.common.result.ResultCode.UNAUTHORIZED, "该操作需要用户登录态");
+        }
+        return id;
+    }
+
     /**
      * 清理线程变量。必须在请求结束时调用（拦截器 afterCompletion），
      * 否则线程池复用线程时会污染下一个请求 —— 这是 ThreadLocal 最经典的内存泄漏/数据串台坑。
