@@ -63,6 +63,9 @@ services:
       NACOS_AUTH_TOKEN: YWlodWJfZGV2X3Rva2VuX3BsZWFzZV9jaGFuZ2VfbWVfMzJieXRlcw==
       NACOS_AUTH_IDENTITY_KEY: aihub
       NACOS_AUTH_IDENTITY_VALUE: aihub
+      # 注意：开启鉴权后必须先初始化管理员用户，否则客户端登录 403：
+      #   docker exec aihub-nacos curl -s -X POST 'http://127.0.0.1:8848/nacos/v3/auth/user/admin' -d 'password=Nacos@aihub123'
+      # （仅管理员不存在时可调用一次；凭据需与 aihub-common.yml 的 spring.cloud.nacos 账号一致）
       NACOS_AUTH_ENABLE: "true"
     volumes:
       - nacos-data:/home/nacos/data
@@ -90,26 +93,6 @@ services:
       retries: 15
     restart: always
 
-  minio:
-    # 可选：aihub.storage.type=minio 时才需要（入库原始文件多实例共享）。
-    # 用 latest 保证可得；生产请固定到具体 RELEASE tag
-    image: minio/minio:latest
-    container_name: aihub-minio
-    command: server /data --console-address ":9001"
-    ports:
-      - "9000:9000"   # S3 API
-      - "9001:9001"   # 控制台（浏览器打开，账号见 MINIO_ROOT_USER）
-    environment:
-      MINIO_ROOT_USER: aihub
-      MINIO_ROOT_PASSWORD: aihub12345
-      TZ: Asia/Shanghai
-    volumes:
-      - minio-data:/data
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:9000/minio/health/live >/dev/null || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 15
 
   prometheus:
     image: prom/prometheus:v2.53.0
