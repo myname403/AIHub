@@ -163,6 +163,26 @@ aihub:
   # 会话记忆窗口
   memory:
     window-size: 20
+  # 发件箱（Outbox）：跨服务上报（用量）失败时落库重投，把"尽力而为"升级为"最终一致"。
+  # 表 ai_event_outbox 早在 V1 就建好，本节起真正启用（见 infra/outbox 两个类）
+  outbox:
+    enabled: ${AIHUB_OUTBOX_ENABLED:true}
+    # 单轮最多投递条数
+    batch-size: 50
+    # 单条最大重试次数，超过即放弃（status=2），避免坏数据无限打转
+    max-retry: 3
+    # 轮询间隔（秒）
+    fixed-delay-seconds: 30
+  # 多租户 SQL 兜底（隔离的第五道防线）：由 MyBatis-Plus 自动为租户表追加 tenant_id 条件，
+  # 把"每个 Repository 手写租户条件"的人工约定升级为框架级兜底。
+  # ★ 默认关闭：它改的是每一条 SQL，而本项目自动化测试以 Mockito 单测为主，
+  #   覆盖不到真实 SQL 的解析与改写。请在测试环境用真实 MySQL 按 TenantSqlGuardConfig
+  #   类注释里的三步回归通过后，再置 true（同时观察日志无 SQL 异常）。
+  tenant:
+    sql-guard:
+      enabled: ${AIHUB_TENANT_SQL_GUARD_ENABLED:false}
+      # 额外白名单（逗号分隔）：不含 tenant_id 列的字典表
+      ignore-tables: ${AIHUB_TENANT_SQL_GUARD_IGNORE:}
   # Agent 三重预算（防止死循环与成本失控，见 06 号文档 R6）
   agent:
     max-sub-tasks: 3

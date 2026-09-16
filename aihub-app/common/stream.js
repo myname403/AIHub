@@ -24,27 +24,43 @@ export function streamChat({ appId = 0, conversationId = '', message, scene, mod
     Authorization: 'Bearer ' + getToken()
   }
   let buffer = ''
+  // H5 侧的中断句柄（AbortController 只能在 H5 用；小程序侧用 task.abort()）
+  let h5Controller = null
+
+  const emitLine = (line) => {
+    const trimmed = line.trim()
+    if (!trimmed) return
+    try {
+      onEvent(JSON.parse(trimmed))
+    } catch (e) {
+      // 忽略无法解析的残缺行
+    }
+  }
 
   const handleChunk = (text) => {
     buffer += text
     const lines = buffer.split('\n')
     buffer = lines.pop() || '' // 最后一段可能是半包，留到下一块
-    for (const line of lines) {
-      const trimmed = line.trim()
-      if (!trimmed) continue
-      try {
-        onEvent(JSON.parse(trimmed))
-      } catch (e) {
-        // 忽略无法解析的残缺行
-      }
-    }
+    for (const line of lines) emitLine(line)
+  }
+
+  /**
+   * 流结束时冲刷缓冲区：服务端最后一帧可能没有以 \n 结尾，
+   * 只靠 handleChunk 会把它当"半包"留在 buffer 里被丢掉（表现为最后一条消息渲染不出来）。
+   */
+  const flush = () => {
+    const rest = buffer
+    buffer = ''
+    emitLine(rest)
   }
 
   // #ifdef H5
+  h5Controller = new AbortController()
   fetch(config.baseUrl + '/api/ai/chat/ndjson', {
     method: 'POST',
     headers: header,
-    body
+    body,
+    signal: h5Controller.signal
   }).then(async (res) => {
     if (res.status === 401) {
       onEvent({ e: 'error', data: { message: '登录已过期' } })
@@ -57,8 +73,10 @@ export function streamChat({ appId = 0, conversationId = '', message, scene, mod
       if (done) break
       handleChunk(decoder.decode(value, { stream: true }))
     }
-    handleChunk('')
+    flush()
   }).catch((err) => {
+    // 用户点"停止"触发的中断不是错误，不弹提示
+    if (err && err.name === 'AbortError') return
     onEvent({ e: 'error', data: { message: '连接失败：' + err.message } })
   })
   // #endif
@@ -71,7 +89,7 @@ export function streamChat({ appId = 0, conversationId = '', message, scene, mod
     data: body,
     enableChunked: true,
     responseType: 'arraybuffer',
-    success: () => handleChunk(''),
+    success: () => flush(),
     fail: (err) => onEvent({ e: 'error', data: { message: '连接失败：' + (err.errMsg || '') } })
   })
   task.onChunkReceived((res) => {
@@ -84,6 +102,12 @@ export function streamChat({ appId = 0, conversationId = '', message, scene, mod
   return { abort }
 
   function abort() {
+    // #ifdef H5
+    // 真正断开 fetch 连接（旧实现里 H5 分支是空的，只能等服务端跑完）。
+    // 注意：客户端断开只是停止接收，服务端仍在执行 —— 所以调用方还要配合
+    // POST /api/ai/agent/cancel 让服务端在步骤边界终止（见 pages/chat/chat.vue 的 stop()）。
+    if (h5Controller) h5Controller.abort()
+    // #endif
     // #ifdef MP-WEIXIN
     task && task.abort()
     // #endif

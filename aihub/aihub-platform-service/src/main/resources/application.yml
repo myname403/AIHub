@@ -67,6 +67,15 @@ aihub:
     api-key-secret: ${AIHUB_APIKEY_SECRET:aihub-default-apikey-secret-please-change-me}
     # 单租户可签发的有效 Key 上限
     max-api-keys-per-tenant: 20
+  # 多租户 SQL 兜底（隔离的第五道防线）：由 MyBatis-Plus 自动为租户表追加 tenant_id 条件。
+  # ★ 默认关闭 —— 它改的是每一条 SQL（sys_user/ai_quota_* 等），而本模块测试是 Mockito 单测，
+  #   覆盖不到真实 SQL 改写。请在测试环境用真实 MySQL 回归（登录 → RBAC → API Key → 配额 → 看板）
+  #   通过后再置 true，详见 MybatisPlusConfig 的类注释。
+  #   白名单（不含 tenant_id 列的全局表）：sys_tenant / sys_menu / sys_role_menu
+  tenant:
+    sql-guard:
+      enabled: ${AIHUB_TENANT_SQL_GUARD_ENABLED:false}
+      ignore-tables: ${AIHUB_TENANT_SQL_GUARD_IGNORE:}
 
 management:
   endpoints:

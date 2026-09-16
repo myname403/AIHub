@@ -14,7 +14,9 @@
 | `aihub-platform-service` | 8081 | 登录、租户、用户、角色、API Key、配额、审计 |
 | `aihub-ai-service` | 8082 | **模型网关 / 应用 / RAG / 工具 / MCP / Agent / 会话 / 产物（内聚）** |
 
-补充模块：`aihub-common`（通用支撑）、`aihub-api`（跨服务 Feign 契约）。
+补充模块：`aihub-common`（通用支撑）、`aihub-api`（跨服务 Feign 契约）、
+`aihub-mcp-service`（MCP 工具的业务实现，协议无关）、`aihub-mcp-sse`（SSE / Streamable-HTTP 对外服务）、
+`aihub-mcp-stdio`（stdio 本地接入，可执行 jar）。
 
 > **AI 能力刻意不拆分**：知识入库、流式输出、Agent 长任务一旦跨服务，会引入分布式事务、
 > 流式跨服务传递、长任务编排三大难题。因此全部内聚在 `aihub-ai-service`。
@@ -121,7 +123,12 @@ aihub/
 ├── aihub-platform-service/  平台服务：登录/租户/配额/审计
 ├── aihub-ai-service/        AI 服务（内聚）
 │   └── src/test/.../ArchitectureTest.java   ★ 架构依赖卡口
-├── docker-compose.yml       MySQL + Redis Stack + Nacos + Sentinel
+├── aihub-mcp-service/       MCP 工具业务实现（协议无关，可单测）
+├── aihub-mcp-sse/           MCP Server：SSE / Streamable-HTTP 传输
+├── aihub-mcp-stdio/         MCP Server：stdio 传输（可执行 jar）
+├── monitoring/              Prometheus 抓取配置 + Grafana 预装配仪表板
+├── docs/nacos/              Nacos 配置模板与 Sentinel 规则样例
+├── docker-compose.yml       MySQL + Redis Stack + Nacos + Sentinel + MinIO + Prometheus + Grafana
 └── docker/mysql/init.sql
 ```
 
@@ -132,3 +139,38 @@ aihub/
 3. 下游服务通过 `TenantResolveInterceptor` 读取上下文，缺失即拒绝
 4. 服务间调用由 Feign 拦截器自动透传租户头
 5. 两个服务的库独立，**禁止跨库 JOIN**
+
+### 6.1 租户 SQL 兜底（第五道防线，默认关闭）
+
+上面第 1~4 条保证"租户是谁不可伪造"，但**"查询有没有带租户条件"仍靠各 Repository 手写**
+—— 漏写一行就是跨租户越权，且评审时很难发现。为此内置了 MyBatis-Plus 的
+`TenantLineInnerInterceptor`（ai-service `TenantSqlGuardConfig` / platform `MybatisPlusConfig`），
+开启后由框架自动为租户表追加 `tenant_id = 当前租户`：
+
+```bash
+export AIHUB_TENANT_SQL_GUARD_ENABLED=true
+```
+
+- 无租户上下文时（登录、异步入库线程、内部接口）**一律跳过**，行为与关闭时一致；
+- 白名单（不含 `tenant_id` 列的全局表）：ai-service 为 `ai_model_provider`；
+  platform 为 `sys_tenant` / `sys_menu` / `sys_role_menu`；
+- **★ 默认关闭的原因**：它改的是每一条 SQL，而自动化测试以 Mockito 单测为主，
+  **覆盖不到真实 SQL 的解析与改写**。请先用真实 MySQL 跑通
+  「登录 → 对话 → 知识库上传/检索 → Agent → 用量看板 → 管理端 CRUD」，
+  确认日志无 SQL 异常后再开启。
+
+## 7. 跨服务最终一致（发件箱）
+
+用量上报是 ai → platform 的跨服务调用，平台抖动时若只打日志就会**永久丢账**。
+现由发件箱兜底（Outbox 模式，表 `ai_event_outbox` 在 V1 就已建好，本节起真正启用）：
+
+| 组件 | 职责 |
+| --- | --- |
+| `domain/spi/EventOutbox` | 端口：`enqueue(tenantId, type, payload)` |
+| `infra/outbox/DbEventOutbox` | 序列化落库（status=0 待投递）；失败只记日志，绝不向上抛 |
+| `infra/outbox/EventOutboxDispatcher` | 守护线程定时重投（默认 30s 一轮、批量 50、最多重试 3 次后放弃） |
+
+- **投递前必须补齐租户上下文**：后台线程没有请求上下文，而 Feign 拦截器只在租户非空时
+  写 `X-Tenant-Id`，平台侧又强制要求该头存在 —— 不补上下文的重投会 100% 失败（详见两个类的注释）；
+- 配置：`aihub.outbox.enabled`（默认 true）/ `batch-size` / `max-retry` / `fixed-delay-seconds`；
+- 状态语义：`0` 待投递 · `1` 已投递 · `2` 已放弃（重试超限）。

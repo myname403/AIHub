@@ -562,6 +562,26 @@ curl -X POST http://127.0.0.1:8080/api/ai/chat \
 > 仍值得做的增强方向（无排期）：MCP 会话级多租户（一条连接切租户，需 MCP 生态
 > headers 透传支持）、Grafana 告警规则、HTTP 连接池治理、前端单测覆盖。
 
+### 收尾轮（2026-09）：修掉"文档写了但代码没有"的 10 处
+
+整理面试文档时对全仓做了一次「文档 vs 代码」核对，逐项修掉了不一致：
+
+| 项 | 之前 | 现在 |
+| --- | --- | --- |
+| `ai_event_outbox` | 表建了但**零实现**，上报失败只 `log.warn` | 完整 Outbox：domain 端口 + 落库 + 守护线程重投（见 `aihub/README.md` 第 7 节） |
+| `task` 维度配额 | 拿到 `allowed` 却忽略，超限只记账不阻断 | 与 request/doc 维度一致：同步抛 `QUOTA_EXCEEDED`、流式发 error 事件 |
+| 租户 SQL 兜底 | 无，隔离全靠手写 `.eq(tenantId)` | 已实现 `TenantLineInnerInterceptor`（含白名单 + 无上下文即跳过）——**默认关闭**，见 `aihub/README.md` 6.1 |
+| `PlanningAgent` | `finally` 可能 NPE，覆盖掉原始错误 | 兜底失败态，保证 `ai_agent_task` 始终有终态 |
+| `browser.max-steps` | 被规划层共享预算覆盖，**配置不生效** | 由自身配置决定，并补了"共享预算 3 步也要能跑 4 步"的回归用例 |
+| `initialize-schema` 配置 | 代码硬编码 `true`，**配置完全无效** | 配置真正生效 |
+| 供应商协议族判定 | 遗漏 ollama，与 `ChatClientFactory` 分支语义分裂 | 补齐全部 5 个供应商 + 构建前快速失败 + 用例钉住 |
+| ArchUnit | 4 条，infra 之间只卡了一个方向 | **7 条**（domain 禁全部 Spring/Jackson、application 禁 Spring AI、底层 infra 不得反向依赖 AI 层） |
+| 前端 mock | `vitePluginFakeServer` 带 `enableProd: true`，**会把 mock 打进生产包** | 移除注册，并加 `mock/README.md` 说明其为模板遗留 |
+| 前端部署 | Dockerfile 只 COPY dist，容器内 `/api`、`/auth` **无反向代理（全 404）** | 补 `deploy/nginx/default.conf.template` + envsubst 注入 `BACKEND_URL`（顺带补 traceId 展示、H5 中断） |
+
+> 全量回归 **315 个用例全绿**（ai-service 185 / platform 49 / common 30 /
+> mcp-service 42 / mcp-sse 8 / mcp-stdio 1）。
+
 ## 六、安全红线（务必遵守）
 
 1. 租户 ID **只能**从 JWT / API Key 解析，绝不接受前端传参
@@ -569,3 +589,6 @@ curl -X POST http://127.0.0.1:8080/api/ai/chat \
 3. 模型密钥 AES-GCM 加密落库，日志与响应永不出现明文
 4. 跨租户数据零可见：向量检索强制过滤 + 出口逐条校验
 5. 两库独立，禁止跨库 JOIN
+6. 框架级兜底（`TenantLineInnerInterceptor`）**默认关闭**：它改的是每一条 SQL，
+   而自动化测试以 mock 为主、覆盖不到真实 SQL 改写。开启前必须按
+   `aihub/README.md` 6.1 的步骤在真实库回归 —— **不要把未验证的全局 SQL 改写当默认行为**

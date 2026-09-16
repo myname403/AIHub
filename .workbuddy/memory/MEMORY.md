@@ -163,3 +163,69 @@
   McpServerStreamableHttpWebMvcAutoConfiguration；`MCP_PROTOCOL=streamable` 切换，
   端点默认 /mcp（前缀 spring.ai.mcp.server.streamable-http）。
 - MCP 客户端带鉴权头：连接配置 headers 填 {"Authorization": "Bearer <token>"}。
+
+## 十三、前端现状（2026-09 核实）
+
+- **`aihub-admin-ui/` = vue-pure-admin 精简版 6.2.0**（package.json name `pure-admin-thin`）。
+  Vue 3.5.22 / Vite 7.1.12 / TS 5.9.3 / Element Plus 2.11.5 / Pinia 3.0.3 / axios 1.12.2 / echarts 6.0.0。
+  真实改写只有 5 处：vite proxy（/auth、/api → 8080）、api/user.ts（`/auth/login` 带 tenantCode）、
+  api/routes.ts（后端动态菜单，`menuType:M/C/F`，**F 按钮不进路由**，配 `v-perms` 指令）、
+  utils/http 响应解包（`code===0` 直接返回 data、`10002` 跳登录、`isRefreshing`+队列无感刷新）、
+  views 下 8 个业务页（usage/model/app/kb/user/role/menu/apikey）。
+  **模板残留未启用**：mock 三文件（对接的还是模板自己的 /login）、ECharts（main.ts 注册被注释）、
+  i18n、暗黑、6 个 store；无前端单测；**业务接口未下沉到 api 层**（在 .vue 里裸调 http.request）。
+  Dockerfile = node 构建 + nginx 托管 dist，**缺 nginx.conf，/api 无反向代理**。
+- **`aihub-app/`（uni-app）**：Vue 3.5.42 / Vite 5.4.21，`@dcloudio` alpha 3.0.0-5020520260829001；
+  8 页；**未引入 uview/uni-ui**（控包体积）。流式双实现：H5 = fetch + ReadableStream
+  （**不用 EventSource：无法携带自定义 Header**），小程序 = `uni.request({enableChunked:true})`
+  + `onChunkReceived`；手写半包 buffer（`lines.pop()` 留半行）与 UTF-8 解码
+  （小程序无 TextDecoder，4 字节字符用 `String.fromCodePoint`）；条件编译 4 处；
+  **H5 的 abort() 是空实现**，停止靠服务端 `/api/ai/agent/cancel`。
+- **租户头前端不加**：网关从 JWT 解析并注入，且先 remove 再 set 防伪造。
+
+## 十四、文档与代码一致性（2026-09-16 收尾轮已修 10 处）
+
+**已修复（别再按旧印象说"没有"）**：
+1. **多租户 SQL 兜底已实现**：`TenantSqlGuardConfig`（ai-service）+ `MybatisPlusConfig`（platform）
+   的 `TenantLineInnerInterceptor`，含白名单与"无租户上下文即 ignoreTable"。
+   **默认关闭**（`aihub.tenant.sql-guard.enabled=false`）——单测 mock 覆盖不到真实 SQL 改写，
+   未在真库验证不做默认值；开启步骤见类注释与 aihub/README.md 6.1。
+2. **`ai_event_outbox` 已真正启用**：`domain/spi/EventOutbox` + `infra/outbox/DbEventOutbox`
+   + `EventOutboxDispatcher`（守护线程 30s/批 50/重试 3）。★ 坑：**投递前必须补齐
+   `TenantContext`**，否则 Feign 不带 `X-Tenant-Id`、平台侧拒收，重投 100% 失败。
+3. `initialize-schema` 配置已真正生效（原硬编码 true）。
+4. `task` 维度配额已与其它维度一致（同步抛异常 / 流式发 error 事件），降级放行保留。
+5. `browser.max-steps` 已由自身配置决定（原被规划层共享预算压成 3 步）。
+6. docs 04 的 "Spring Security + JWT" 已改为实情（jjwt 0.12.6 + 网关 AuthGlobalFilter）。
+7. `PlanningAgent.execute()` finally 已兜底终态（防 NPE 覆盖原异常）。
+8. ArchUnit 4 条 → **7 条**（含"底层 infra 不得反向依赖 AI 层"）。
+9. `ModelEndpoint.openAiCompatible()` 已补 ollama + resolver 快速失败。
+10. 前端：移除 fake-server（原 enableProd=true 会打进生产包）、补 Nginx 反代模板、
+    axios 读 X-Trace-Id、H5 abort 用 AbortController、启用 ECharts 画调用趋势。
+
+**仍然存在（知道即可，别在面试里吹）**：
+- 配额 `consume()` **非事务**，并发有超扣窗口（改进方案见 interview-prep/08）；
+- 向量模型默认指向**本地 Ollama**（localhost:11434 / embeddinggemma），未装则 RAG 降级；
+- 管理端业务接口未下沉 `api/` 层（42 处 `.vue` 内裸调 `http.request`）；
+- 没有前端单测、没有系统化 AI 评测集、没有跨租户端到端回归测试；
+- **租户兜底与 outbox 未在真实 MySQL 上跑过**（本机 Docker 未启动，验证不了）。
+
+## 十五、环境补充（2026-09-16）
+
+- **`aihub-admin-ui` 是独立 git 仓库**（`.git` 的 remote 指向 `pure-admin/pure-admin-thin` 上游），
+  外层仓库**不跟踪**它（`git ls-files aihub-admin-ui` = 0）。在它里面改动要单独提交；
+  在根仓库 `git add` 会把整个目录当未跟踪目录处理，注意 node_modules 已被其自身 .gitignore 排除。
+- admin-ui 的 `node_modules` 曾不完整：执行 `pnpm typecheck` 会自动触发完整安装
+  （~500 包，含 86MB 的 @iconify/json），很慢。
+- 全量回归命令：`cd aihub && export JAVA_HOME='D:\Java_JDK\jdk21.0.8_9' &&
+  "D:/Java_JDK/maven-mvnd-1.0.2-windows-amd64/bin/mvnd.cmd" test`，
+  落盘再 grep；**mvnd 偶发 "Timeout waiting to connect to the Maven daemon"，重试即可**。
+  当前基线：**315 用例全绿**（ai 185 / platform 49 / common 30 / mcp-service 42 / sse 8 / stdio 1）。
+
+## 十五、面试准备文档
+
+- 位置 `interview-prep/`（13 篇，约 3 万中文字）：README 导航、01 电梯演讲/简历映射、
+  02 架构、03 Java/JVM、04 Spring、05 数据层与多租户、06 Agent 与 LLM、07 全栈、
+  08 系统设计、09 STAR 故事库、10 手撕、11 策略与反问、12 自测清单。
+- 写法：每个知识点 = 八股 → 本项目代码在哪 → 为什么不那样做 → 追问预警。
+  **照妖镜章节（09/12）列全部未实现项**，面试时主动承认而非硬吹。

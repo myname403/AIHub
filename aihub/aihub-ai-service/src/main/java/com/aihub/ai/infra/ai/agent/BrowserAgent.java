@@ -147,7 +147,13 @@ public class BrowserAgent extends BaseAgent {
 
         String observation = "尚未打开任何页面。请先用 open 动作打开目标网页。";
         Deque<String> history = new ArrayDeque<>();
-        int steps = Math.max(1, root.budget().maxSubTasks());
+        // 步数上限取浏览器 Agent 自有配置（aihub.agent.browser.max-steps，默认 8）。
+        // 为什么不用 root.budget().maxSubTasks()：那是「规划层能派几个子任务」的语义，
+        // 与浏览器内部的 ReAct 循环步数不是同一个概念。PlanningAgent 派发子任务时
+        // 所有子 Agent 共享同一份 budget（maxSubTasks=3），若沿用会把配置的 8 步压成 3 步，
+        // 导致 browser.max-steps 配置形同虚设。
+        // Token 与超时仍由共享 budget 约束（循环内每次检查），整体任务不会跑飞。
+        int steps = Math.max(1, agentProperties.getBrowser().getMaxSteps());
 
         for (int i = 0; i < steps; i++) {
             if (cancelRegistry.isCanceled(root.conversationId())) {

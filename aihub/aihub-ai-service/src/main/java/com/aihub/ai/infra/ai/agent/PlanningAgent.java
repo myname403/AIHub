@@ -99,11 +99,17 @@ public class PlanningAgent extends BaseAgent {
         } catch (Exception e) {
             result = fallback(root, e);
         } finally {
-            taskRepository.finish(taskId, result.status(), result.answer(),
+            // 防御：上面的 catch 只覆盖 Exception，若 run() 抛出 Error（OutOfMemoryError 等）
+            // 则 result 仍为 null —— 此时直接读 result.status() 会 NPE，
+            // 而 NPE 会把真正的原始错误从堆栈里挤掉（排查时极具误导性）。
+            // 故这里兜一个失败态，保证 java_agent_task 始终有终态落库。
+            AgentResult finished = result != null ? result
+                    : new AgentResult(AgentResult.FAILED, "任务执行异常终止（非 Exception 错误）", artifacts);
+            taskRepository.finish(taskId, finished.status(), finished.answer(),
                     System.currentTimeMillis() - start, budget.usedTokens());
             cancelRegistry.clear(root.conversationId());
             if (aiMetrics != null) {
-                aiMetrics.recordAgentTask(result.status());
+                aiMetrics.recordAgentTask(finished.status());
             }
         }
         return result;

@@ -62,7 +62,11 @@ public class VectorStoreConfig {
             @Value("${spring.data.redis.port:6379}") int port,
             @Value("${spring.data.redis.password:}") String password,
             @Value("${spring.ai.vectorstore.redis.index-name:spring-ai-index}") String indexName,
-            @Value("${spring.ai.vectorstore.redis.prefix:embedding:}") String prefix) {
+            @Value("${spring.ai.vectorstore.redis.prefix:embedding:}") String prefix,
+            // ★ 这个配置项必须真的读出来用：早期版本此处硬编码 true，
+            //   配置里写 initialize-schema: false 完全不生效（改配置没有任何效果，
+            //   属于"配置项存在但形同虚设"的静默失效，排查时极易被误导）。
+            @Value("${spring.ai.vectorstore.redis.initialize-schema:true}") boolean initializeSchema) {
 
         URI uri = password == null || password.isBlank()
                 ? URI.create("redis://" + host + ":" + port)
@@ -75,7 +79,7 @@ public class VectorStoreConfig {
                         RedisVectorStore.MetadataField.tag("tenant_id"),
                         RedisVectorStore.MetadataField.tag("kb_id"),
                         RedisVectorStore.MetadataField.tag("doc_id"))
-                .initializeSchema(true)
+                .initializeSchema(initializeSchema)
                 .build();
     }
 }

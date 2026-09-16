@@ -156,10 +156,17 @@ class BrowserAgentTest {
     /** 组装一个带脚本模型的 Agent（任务预算由用例给定，决定步数上限） */
     private BrowserAgent newAgent(ScriptedChatModel model, BrowserSessionManager sessions,
                                   AgentTaskRepository taskRepository, AgentCancelRegistry cancelRegistry) {
+        return newAgent(model, sessions, taskRepository, cancelRegistry, new AgentProperties());
+    }
+
+    /** 组装 Agent，可自定义 Agent 配置（如浏览器步数上限） */
+    private BrowserAgent newAgent(ScriptedChatModel model, BrowserSessionManager sessions,
+                                  AgentTaskRepository taskRepository, AgentCancelRegistry cancelRegistry,
+                                  AgentProperties properties) {
         ChatClientFactory factory = Mockito.mock(ChatClientFactory.class);
         Mockito.when(factory.create(any(), any(), any()))
                 .thenReturn(ChatClient.builder(model).build());
-        return new BrowserAgent(factory, sessions, taskRepository, cancelRegistry, new AgentProperties());
+        return new BrowserAgent(factory, sessions, taskRepository, cancelRegistry, properties);
     }
 
     @Test
@@ -199,7 +206,7 @@ class BrowserAgentTest {
     }
 
     @Test
-    void stopsAtStepBudgetAndReportsBudgetExceeded() {
+    void stopsAtConfiguredBrowserStepBudget() {
         ScriptedChatModel model = new ScriptedChatModel();
         model.enqueue(
                 "{\"action\":\"open\",\"url\":\"https://example.com\"}",
@@ -209,18 +216,52 @@ class BrowserAgentTest {
         Mockito.when(taskRepository.create(any(), anyString())).thenReturn(101L);
         AgentCancelRegistry cancelRegistry = Mockito.mock(AgentCancelRegistry.class);
         Mockito.when(cancelRegistry.isCanceled(any())).thenReturn(false);
-        BrowserAgent agent = newAgent(model, sessions, taskRepository, cancelRegistry);
+        // 步数上限来自浏览器 Agent 自有配置 aihub.agent.browser.max-steps（而非共享预算的 maxSubTasks）
+        AgentProperties properties = new AgentProperties();
+        properties.getBrowser().setMaxSteps(2);
+        BrowserAgent agent = newAgent(model, sessions, taskRepository, cancelRegistry, properties);
 
-        // 步数预算 2，脚本里没有 done → 循环两步后必须被预算终止
+        // 脚本里没有 done → 跑满 2 步后必须被步数预算终止
         AgentTask task = new AgentTask(1L, 9L, 2L, "conv-9", "目标")
-                .withBudget(new AgentBudget(2, 0, 0));
+                .withBudget(new AgentBudget(10, 0, 0));
 
         AgentResult result = agent.execute(task, new RecordingSink());
 
         assertThat(result.status()).isEqualTo(AgentResult.BUDGET_EXCEEDED);
         assertThat(result.answer()).contains("步数上限");
+        assertThat(model.calls).isEqualTo(2);
         Mockito.verify(taskRepository).finish(Mockito.eq(101L),
                 Mockito.eq(AgentResult.BUDGET_EXCEEDED), anyString(), anyLong(), anyLong());
+    }
+
+    @Test
+    void stepBudgetIsNotCompressedByPlanSubTaskBudget() {
+        // 回归用例：PlanningAgent 派发子任务时，所有子 Agent 共享同一份 budget
+        // （maxSubTasks=3，表示"最多拆 3 个子任务"）。早期 BrowserAgent 直接拿
+        // budget.maxSubTasks() 当循环步数上限，导致配置的 8 步被压成 3 步 ——
+        // 本用例固定"共享预算 3 步 + 实际需要 4 步动作"的场景，必须能跑完。
+        ScriptedChatModel model = new ScriptedChatModel();
+        model.enqueue(
+                "{\"action\":\"open\",\"url\":\"https://example.com\"}",
+                "{\"action\":\"click\",\"ref\":\"e1\"}",
+                "{\"action\":\"click\",\"ref\":\"e1\"}",
+                "{\"action\":\"click\",\"ref\":\"e1\"}",
+                "{\"action\":\"done\",\"summary\":\"第 4 步动作之后完成\"}");
+        RecordingSessions sessions = new RecordingSessions(new FakeDriver());
+        AgentTaskRepository taskRepository = Mockito.mock(AgentTaskRepository.class);
+        Mockito.when(taskRepository.create(any(), anyString())).thenReturn(106L);
+        AgentCancelRegistry cancelRegistry = Mockito.mock(AgentCancelRegistry.class);
+        Mockito.when(cancelRegistry.isCanceled(any())).thenReturn(false);
+        // 默认 AgentProperties：browser.max-steps = 8
+        BrowserAgent agent = newAgent(model, sessions, taskRepository, cancelRegistry);
+
+        AgentTask task = new AgentTask(1L, 9L, 2L, "conv-9", "目标")
+                .withBudget(new AgentBudget(3, 0, 0));
+
+        AgentResult result = agent.execute(task, new RecordingSink());
+
+        assertThat(result.status()).isEqualTo(AgentResult.DONE);
+        assertThat(model.calls).isEqualTo(5);   // 4 个动作 + 1 次 done，未被 3 步截断
     }
 
     @Test

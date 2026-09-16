@@ -21,8 +21,11 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public class AgentProperties {
 
     /**
-     * 单任务默认步数预算上限：PlanningAgent 的最大子任务数、
-     * BrowserAgent 的 ReAct 最大决策步数（默认预算下使用，上层派发时沿用共享预算）。
+     * PlanningAgent 的最大子任务数（规划层语义：一个目标最多拆成几步）。
+     *
+     * <p><b>注意不要与浏览器步数混淆</b>：本值<b>不</b>约束 BrowserAgent 的 ReAct 循环步数，
+     * 那是 {@code aihub.agent.browser.max-steps} 的职责。两者是不同维度的概念，
+     * 早期版本让浏览器 Agent 沿用了本值，导致 max-steps 配置不生效（已修正）。
      */
     private int maxSubTasks = 3;
 

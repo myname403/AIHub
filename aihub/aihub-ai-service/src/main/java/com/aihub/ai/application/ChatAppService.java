@@ -4,12 +4,14 @@ import com.aihub.ai.domain.model.AgentNames;
 import com.aihub.ai.domain.model.AgentResult;
 import com.aihub.ai.domain.model.AgentTask;
 import com.aihub.ai.domain.model.ChatTurn;
+import com.aihub.ai.domain.model.EventTypes;
 import com.aihub.ai.domain.model.MessageReference;
 import com.aihub.ai.domain.model.StreamEvent;
 import com.aihub.ai.domain.spi.Agent;
 import com.aihub.ai.domain.spi.AgentRegistry;
 import com.aihub.ai.domain.spi.ChatExecutor;
 import com.aihub.ai.domain.spi.ChatExecutor.StreamResult;
+import com.aihub.ai.domain.spi.EventOutbox;
 import com.aihub.ai.domain.spi.MessageReferenceStore;
 import com.aihub.ai.domain.spi.StreamSink;
 import com.aihub.api.client.PlatformClient;
@@ -53,11 +55,12 @@ public class ChatAppService {
 
     private static final String SCENE_AGENT = "agent";
 
-    // ↓ 四个依赖全部是接口（domain SPI 或 api 契约），实现由 Spring 注入 —— 面向接口编程
+    // ↓ 五个依赖全部是接口（domain SPI 或 api 契约），实现由 Spring 注入 —— 面向接口编程
     private final ChatExecutor chatExecutor;                    // 对话执行器（Spring AI 实现）
     private final PlatformClient platformClient;                // 平台服务 Feign 契约（配额/上报）
     private final AgentRegistry agentRegistry;                  // Agent 注册表（按名字找 Agent）
     private final MessageReferenceStore messageReferenceStore;  // RAG 引用来源存储
+    private final EventOutbox eventOutbox;                      // 发件箱（上报失败的最终一致兜底）
 
     /**
      * 同步对话主流程。
@@ -93,7 +96,9 @@ public class ChatAppService {
                 return;
             }
             if (SCENE_AGENT.equals(turn.scene())) {
-                consumeAgentTask(turn);
+                if (!consumeAgentTaskOrEmit(turn, sink)) {
+                    return;   // task 配额超限：error 事件已发出，不再执行 Agent
+                }
                 String answer = runAgent(turn, sink);
                 reportUsage(turn, StreamResult.of(answer, "", 0L));
                 return;
@@ -158,14 +163,47 @@ public class ChatAppService {
         }
     }
 
-    /** Agent 任务维度扣减（M5）：task 维度用于限制 Agent 这类高成本调用 */
+    /**
+     * Agent 任务维度扣减（M5）：task 维度用于限制 Agent 这类高成本调用。
+     *
+     * <p><b>超限即拒绝</b>：与 request 维度（checkQuota）、doc 维度（KnowledgeAppService）
+     * 保持同一语义——<b>平台明确拒绝（allowed=false）时抛 QUOTA_EXCEEDED</b>，
+     * 而不是"只记账不阻拦"。早期版本忽略了返回的 allowed，导致 task 配额形同虚设，
+     * 这里修正为与其他维度一致。
+     *
+     * <p>降级语义不变：调用失败（超时/平台不可用）仍放行，只有"平台明确说超限"才拒绝。
+     * 另外平台侧对"未配置策略的维度"直接放行，因此未配 task 策略的租户不受影响。
+     */
     private void consumeAgentTask(ChatTurn turn) {
         try {
-            platformClient.consume(new PlatformClient.QuotaConsumeRequest(
+            var response = platformClient.consume(new PlatformClient.QuotaConsumeRequest(
                     UUID.randomUUID().toString(), turn.tenantId(), String.valueOf(turn.appId()),
                     List.of(new PlatformClient.QuotaItem(QuotaDimensions.TASK, 1))));
+            PlatformClient.QuotaResult result = response == null ? null : response.getData();
+            if (result != null && !result.allowed()) {
+                throw new BizException(ResultCode.QUOTA_EXCEEDED, result.reason());
+            }
+        } catch (BizException e) {
+            throw e;
         } catch (Exception e) {
             log.warn("task 配额扣减失败（已降级）tenant={} err={}", turn.tenantId(), e.getMessage());
+        }
+    }
+
+    /**
+     * 流式路径的 task 配额检查：超限时把"异常"翻译成 error 事件（流式响应里抛异常前端看不到），
+     * 与 checkQuotaOrEmit 同一套思路。
+     */
+    private boolean consumeAgentTaskOrEmit(ChatTurn turn, StreamSink sink) {
+        try {
+            consumeAgentTask(turn);
+            return true;
+        } catch (BizException e) {
+            sink.emit(StreamEvent.error(0, String.valueOf(e.getCode()), e.getMessage()));
+            sink.close();
+            return false;
+        } catch (Exception e) {
+            return true; // 降级放行
         }
     }
 
@@ -203,16 +241,22 @@ public class ChatAppService {
 
     /**
      * 上报用量到平台服务（跨服务调用之一：配额/用量）。
-     * 平台服务不可用时降级放行——AI 能力不因依赖故障而不可用（见 07 号文档 MR3）。
+     *
+     * <p><b>两级降级：</b>平台服务不可用时先打日志放行（AI 能力不因依赖故障而不可用，见 07 号文档 MR3），
+     * 同时把这次上报<b>落入发件箱</b>由后台重投 —— 否则那一笔 token 消耗就永久丢账了。
+     * 发件箱落库本身失败也只记日志：它已经是兜底，兜底再抛异常会盖掉原始错误。
      */
     private void reportUsage(ChatTurn turn, StreamResult result) {
+        PlatformClient.UsageReport report = new PlatformClient.UsageReport(
+                turn.tenantId(), turn.userId(), String.valueOf(turn.appId()),
+                result.modelCode(), result.tokenIn(), result.tokenOut(),
+                result.costMs() == null ? 0L : result.costMs(), "chat");
         try {
-            platformClient.reportUsage(new PlatformClient.UsageReport(
-                    turn.tenantId(), turn.userId(), String.valueOf(turn.appId()),
-                    result.modelCode(), result.tokenIn(), result.tokenOut(),
-                    result.costMs() == null ? 0L : result.costMs(), "chat"));
+            platformClient.reportUsage(report);
         } catch (Exception e) {
-            log.warn("用量上报失败（已降级）conv={} err={}", turn.conversationId(), e.getMessage());
+            log.warn("用量上报失败，转交发件箱异步补偿 conv={} err={}",
+                    turn.conversationId(), e.getMessage());
+            eventOutbox.enqueue(turn.tenantId(), EventTypes.USAGE_REPORT, report);
         }
     }
 }
