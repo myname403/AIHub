@@ -41,6 +41,7 @@ public class TenantResolveInterceptor implements HandlerInterceptor {
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
         // 从请求头读取网关写入的租户/用户 ID（客户端伪造的同名头已在网关被剥离）
+        //直接验证租户头，没有的直接拒绝，preHandle 方法返回 false
         String tenant = request.getHeader(TenantContext.HEADER_TENANT);
         String user = request.getHeader(TenantContext.HEADER_USER);
 
@@ -49,6 +50,7 @@ public class TenantResolveInterceptor implements HandlerInterceptor {
             throw new BizException(ResultCode.TENANT_MISMATCH, "请求缺少租户上下文");
         }
         // 用户头可缺省（如纯 API Key 调用没有用户概念），租户头必须存在
+        //这里的逻辑帮我讲解一下：从请求头获取租户和用户 ID，并写入 TenantContext
         TenantContext.set(Long.valueOf(tenant), user == null || user.isBlank() ? null : Long.valueOf(user));
         return true;
     }

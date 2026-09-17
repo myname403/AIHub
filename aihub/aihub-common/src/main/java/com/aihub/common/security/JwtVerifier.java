@@ -47,7 +47,7 @@ public final class JwtVerifier {
         try {
             // Jwts.parser() 构建解析器：先绑定验签密钥，再解析 token
             Claims claims = Jwts.parser()
-                    .verifyWith(Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8)))
+                    .verifyWith(Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8)))//绑定验签密钥
                     .build()
                     .parseSignedClaims(token)   // 这一步完成：验签 + 过期检查 + 格式检查，任一失败抛异常
                     .getPayload();              // 取出 payload（Claims 继承自 Map）

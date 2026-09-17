@@ -4,10 +4,10 @@
   "private": true,
   "description": "AIHub 前端：uni-app + Vue3，一套代码同时产出 H5 与微信小程序",
   "scripts": {
-    "dev:h5": "uni",
-    "dev:mp-weixin": "uni build -p mp-weixin -w",
-    "build:h5": "uni build",
-    "build:mp-weixin": "uni build -p mp-weixin"
+    "dev:h5": "node scripts/uni.js",
+    "dev:mp-weixin": "node scripts/uni.js build -p mp-weixin -w",
+    "build:h5": "node scripts/uni.js build",
+    "build:mp-weixin": "node scripts/uni.js build -p mp-weixin"
   },
   "dependencies": {
     "@dcloudio/uni-app": "3.0.0-alpha-5020520260829001",
