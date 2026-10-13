@@ -34,17 +34,28 @@ public class SseStreamSink implements StreamSink {
         this.emitter = emitter;
     }
 
+    /**
+     * 推送一个事件给前端（H5 SSE 通道）。
+     * 编排层（ChatAppService）每生成一段内容就调一次本方法，实现"打字机"效果。
+     */
     @Override
     public void emit(StreamEvent event) {
+        // ① 快速失败：连接已关闭（客户端断开 / 已完成）就直接丢弃，避免往死连接写数据抛异常
         if (closed) {
             return;
         }
         try {
+            // ② 组装并发送一帧 SSE 事件：
+            //    SseEmitter.event() 构建一个事件；
+            //    .name(event.event()) 设置事件名（对应前端 addEventListener 的事件类型，如 token/end/error）；
+            //    .data(...) 放事件数据——用 Jackson 把整个 StreamEvent 对象序列化成 JSON 字符串。
+            //    发出去后浏览器收到的就是标准的 "event: xxx\ndata: {...}\n\n" 文本帧。
             emitter.send(SseEmitter.event()
                     .name(event.event())
                     .data(mapper.writeValueAsString(event)));
         } catch (IOException | IllegalStateException e) {
             // 客户端断开等情况：标记关闭，后续事件直接丢弃
+            // IOException：网络写失败（多为客户端已断开）；IllegalStateException：emitter 已 complete/超时
             closed = true;
             log.debug("SSE 发送失败（客户端可能已断开）: {}", e.getMessage());
         }

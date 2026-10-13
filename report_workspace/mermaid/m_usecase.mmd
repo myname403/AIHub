@@ -1,0 +1,27 @@
+flowchart LR
+  U((终端用户))
+  subgraph SG1[用户端能力]
+    direction TB
+    u1[流式对话与模型切换]
+    u2[RAG 知识库问答]
+    u3[Agent 任务与产物]
+    u4[自助注册开通租户]
+  end
+  A((租户管理员))
+  subgraph SG2[管理控制台]
+    direction TB
+    a1[用户与角色管理]
+    a2[菜单权限管理]
+    a3[模型与场景路由]
+    a4[用量统计与配额]
+    a5[API Key 签发吊销]
+  end
+  T((第三方系统))
+  subgraph SG3[开放生态]
+    direction TB
+    t1[开放 API 调用]
+    t2[MCP 工具发现与调用]
+  end
+  U --- SG1
+  A --- SG2
+  T --- SG3

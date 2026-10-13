@@ -32,11 +32,23 @@ public class OpenAiCompatibleChatModelResolver {
             throw new BizException(ResultCode.MODEL_UNAVAILABLE,
                     "供应商 " + endpoint.providerCode() + " 暂不支持（当前仅支持 OpenAI 兼容协议族）");
         }
-        String apiKey = AesGcmTextCipher.decrypt(endpoint.apiKeyCipher(), dataKey);
-        OpenAiApi api = OpenAiApi.builder()
-                .baseUrl(endpoint.baseUrl())
-                .apiKey(apiKey)
-                .build();
+        // 本地 Ollama 等免鉴权供应商的 api_key 可能为空：此时不解密（decrypt(null) 会抛异常，
+        // 进而被上层 catch 成“构建失败→静默降级回默认 OpenAI”的隐蔽故障），直接用空串占位。
+        String apiKey = (endpoint.apiKeyCipher() == null || endpoint.apiKeyCipher().isBlank())
+                ? "" : AesGcmTextCipher.decrypt(endpoint.apiKeyCipher(), dataKey);
+
+        var apiBuilder = OpenAiApi.builder().apiKey(apiKey);
+        String baseUrl = endpoint.baseUrl() == null ? "" : endpoint.baseUrl();
+        // 部分 OpenAI 兼容供应商把版本号写进了 baseUrl（智谱 /api/paas/v4、通义 /compatible-mode/v1 等），
+        // 而 Spring AI 默认补全路径是 /v1/chat/completions，直接拼接会得到 …/v4/v1/chat/completions 而 404。
+        // 约定：baseUrl 若已以 /vN（可带结尾斜杠）结尾，则去掉结尾斜杠并改用不带版本前缀的 /chat/completions；
+        // 否则（如 https://api.openai.com、http://localhost:11434）沿用默认的 /v1/chat/completions。
+        if (baseUrl.matches(".*/v\\d+/?$")) {
+            apiBuilder = apiBuilder.baseUrl(baseUrl.replaceAll("/+$", "")).completionsPath("/chat/completions");
+        } else {
+            apiBuilder = apiBuilder.baseUrl(baseUrl);
+        }
+        OpenAiApi api = apiBuilder.build();
         return OpenAiChatModel.builder()
                 .openAiApi(api)
                 .defaultOptions(OpenAiChatOptions.builder()

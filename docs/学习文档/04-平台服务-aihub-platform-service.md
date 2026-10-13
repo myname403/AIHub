@@ -32,18 +32,25 @@
 **请求路径**：前端 → 网关（/auth/** 免鉴权）→ AuthController → AuthService。
 
 ```
-① resolveTenantId：租户码 → 租户 ID（M0 是内置映射，TODO 改查 sys_tenant 表）
+⓪ captchaService.verify：图形验证码校验（防暴力破解，一次性消费，失败即作废）
+① resolveTenantId：租户码 → 租户 ID（★ 已改查 sys_tenant 表并校验状态，M0 的 TODO 已还清——
+   注册功能上线后租户码不再只是数字，demo/testco 这类字符串码必须查表解析）
 ② selectByTenantAndUsername：按 租户+用户名 查用户（SQL 带 tenant_id，防跨租户撞名）
 ③ passwordEncoder.matches(明文, 库里BCrypt哈希)：验密码
 ④ 状态校验：status != 1 → "账号已停用"
 ⑤ jwtTokenProvider.generate(...)：签发 JWT（tenantId/userId 写进令牌）
-⑥ 返回 {token, tenantId, userId, username}
+⑥ 返回 AuthLoginRespVO（token + tenantId + userId + username，类型安全的 VO 而非 Map）
 ```
 
-**三个安全设计（面试高频）**：
-1. **"用户名或密码错误"统一文案**——分开提示会让攻击者批量探测有效用户名（用户名枚举）；
-2. **BCrypt 而非 MD5/SHA256**：BCrypt 自带随机盐（同密码每次哈希不同，防彩虹表）+ 刻意慢（几十毫秒，拖垮暴力破解）。MD5 早就不安全；
-3. **登录接口必须 POST**：密码不能出现在 URL（URL 会进各层访问日志）。
+**四个安全设计（面试高频）**：
+1. **验证码放最前**——验证码不对就没必要查库（省资源 + 不泄露"账号是否存在"），一次性消费防重放；
+2. **"用户名或密码错误"统一文案**——分开提示会让攻击者批量探测有效用户名（用户名枚举）；
+3. **BCrypt 而非 MD5/SHA256**：BCrypt 自带随机盐（同密码每次哈希不同，防彩虹表）+ 刻意慢（几十毫秒，拖垮暴力破解）。MD5 早就不安全；
+4. **登录接口必须 POST**：密码不能出现在 URL（URL 会进各层访问日志）。
+
+**注册流程（本期新增）**：`POST /auth/register` 单事务创建 租户 + 管理员 + ROLE_ADMIN 角色并授权全部菜单；
+`GET /auth/captcha` 出图形验证码（Hutool 生成 + Caffeine 2 分钟过期）。`demo` 是保留租户码防抢注。
+详见 07 文档 3.1 节。
 
 **JWT 生命周期**：
 ```
@@ -70,6 +77,29 @@
 **revoke 必须带 tenantId 校验**：`entity.getTenantId()` 与上下文租户比对，否则拿着别人的 Key ID 就能越权吊销。**所有"按 ID 操作"的接口都要做这层归属校验（IDOR 漏洞防御）**。
 
 ### 2.3 配额系统（quota 包）—— 两阶段扣减 + 原子计数
+
+**curl 全链路 demo**（登录 → 看配额 → 发起一次消耗真实扣减 → 再看余量变化）：
+
+```bash
+# ① 登录拿 token（code=0，data.token 即凭证）
+curl -s -X POST http://localhost:8080/auth/login -H "Content-Type: application/json" \
+  -d '{"tenantCode":"demo","username":"admin","password":"123456"}'
+# → {"code":0,"data":{"token":"eyJ...","tenantId":1001,...}}
+
+TOKEN=eyJ...   # 上一步的 token
+
+# ② 看当前配额余量（request/day 限额 1000，已用 1）
+curl -s http://localhost:8080/api/platform/usage/quota -H "Authorization: Bearer $TOKEN"
+# → [{"dimension":"request","period":"day","used":1,"limit":1000,"remain":999,...}]
+
+# ③ 发起一次 AI 对话（消耗 1 次数 + token 数）
+curl -s -X POST http://localhost:8080/api/ai/chat -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" -d '{"message":"hi"}'
+# → {"code":0,"data":{"content":"...","costMs":8543,...}}
+
+# ④ 再看余量：used 变 2、token used 涨了 496 —— 扣减真实发生且可查
+curl -s http://localhost:8080/api/platform/usage/quota -H "Authorization: Bearer $TOKEN"
+```
 
 **三张表各司其职**：
 
@@ -122,14 +152,99 @@ on duplicate key update used_value = used_value + #{amount}
 ```java
 order(0) TraceIdInterceptor      // 先有 traceId（报错日志才能查）
 order(1) TenantResolveInterceptor // 再定租户
-排除名单：/auth/**（登录）、/internal/**（内部契约）、/error、swagger、actuator
+order(2) PermissionInterceptor    // 最后做 RBAC 校验（依赖租户上下文）
+排除名单：/auth/**（登录+注册）、/internal/**（内部契约）、/error、swagger、actuator
 ```
 `WebMvcConfigurer` 是 Spring 的 MVC 定制回调接口，实现 addInterceptors 即可挂拦截器。
+
+### CryptoConfig —— 密码编码器统一提供（本期新增）
+```java
+@Bean
+public PasswordEncoder passwordEncoder() { return new BCryptPasswordEncoder(); }
+```
+**为什么做成 Bean 而不是各 Service 自己 new**：① 单例复用；② 全局只有一种加密实现——将来升级算法（换 argon2）只改这一处；③ 测试可注入 Mock。AuthService/SysUserService 都注入它。
+
+### MybatisPlusConfig —— 分页插件（本期新增）
+```java
+interceptor.addInnerInterceptor(new PaginationInnerInterceptor(DbType.MYSQL));
+```
+**不配这个插件的后果**：`selectPage()` 分页参数被静默忽略、退化成查全表——MP 最经典的坑。分页是插件实现的，不是 BaseMapper 自带的。
 
 ### OpenApiConfig —— Swagger 文档
 springdoc-openapi 自动扫描 Controller 生成文档（http://localhost:8081/swagger-ui.html）。
 `OperationCustomizer` 给每个接口文档补 X-Tenant-Id/X-User-Id 头参数说明（直连调试需要）。
 生产环境 `springdoc.api-docs.enabled=false` 关闭。
+
+---
+
+### 3.5 VO 分层重构（本期最大的工程化改进）
+
+**重构前的坏味道**：Controller 直接收发 DO 和 Map——登录返回手拼 `HashMap`，用户列表直接吐 `SysUser`（密码哈希靠"转换完记得手动 setNull"防泄露）。
+
+**重构后的分层约定（对齐芋道）**：
+
+```
+web 层（Controller）   只收发 VO —— 入参校验注解写在 VO 字段上，响应按前端需要裁剪
+   ↕ 转换
+service 层             VO ↔ DO 的映射在这里（手写，字段少；有意排除不该出去的字段）
+   ↕
+持久层（DO）           DO 绝不出现在 Controller 签名里
+```
+
+**VO 带来的三个实际收益**：
+1. `SysUserRespVO` **刻意没有** passwordHash 字段——敏感信息靠分层保证不出门，不再依赖人肉防线；
+2. 登录返回 `AuthLoginRespVO` 替代 Map——字段名拼错编译期就报错，Swagger 能自动展示字段说明；
+3. 修改接口的 VO 可以**排除不可变字段**（如角色编码创建后不可改——update 方法里 patch 压根不 set code 字段，比"检查一下如果传了就报错"更干净）。
+
+**新增的 VO 清单**（都在 `auth/vo/` 与 `system/vo/`）：
+
+| VO | 用途 |
+|---|---|
+| AuthLoginReqVO / AuthLoginRespVO | 登录入参（带验证码字段）/ 出参 |
+| AuthRegisterReqVO / AuthRegisterRespVO | 注册入参 / 出参 |
+| AuthCaptchaRespVO | 验证码（id + base64 图） |
+| SysUserPageReqVO / SysUserCreateReqVO / SysUserUpdateReqVO / SysUserResetPwdReqVO / SysUserAssignRolesReqVO / SysUserChangePwdReqVO / SysUserRespVO | 用户管理七件套（RespVO 无 passwordHash） |
+| SysRolePageReqVO / SysRoleSaveReqVO / SysRoleRespVO / SysRoleAssignMenusReqVO | 角色管理 |
+| SysMenuSaveReqVO / MenuVO | 菜单管理与动态路由树 |
+
+**demo——同一个接口重构前后的对比**：
+
+```java
+// 重构前：Controller 直接用 DO + Map
+@PostMapping("/login")
+public R<Map<String, Object>> login(@RequestBody LoginRequest request) {
+    Map<String, Object> result = new HashMap<>();       // 字段名拼错编译器不报
+    result.put("token", token);                          // 想加什么加什么，无契约
+    return R.ok(result);
+}
+
+// 重构后：VO 进 VO 出
+@PostMapping("/login")
+public R<AuthLoginRespVO> login(@Valid @RequestBody AuthLoginReqVO reqVO) {  // @Valid 触发 VO 上的校验注解
+    return R.ok(authService.login(reqVO));               // Service 内部完成 VO↔DO 转换
+}
+```
+
+**注意事项**：改 VO 字段名时用 `git grep` 搜引用（前端字段同步）；分页返回值 `Page<DO>` → `Page<VO>` 要保留 total/current/size 三个分页字段。
+
+---
+
+### 3.6 system 包速览（本期新增，RBAC 后端）
+
+```
+system\
+├── annotation\RequirePermission.java      # 权限注解（value = 权限标识）
+├── interceptor\PermissionInterceptor.java # 拦截器：反射读注解 → PermissionService 校验
+├── service\
+│   ├── PermissionService.java   # 权限解析链（用户→角色→菜单→权限码）+ Caffeine 缓存
+│   ├── SysUserService.java      # 用户管理（分页/增删改/重置密码/分配角色/防自锁）
+│   ├── SysRoleService.java      # 角色管理（CRUD/菜单授权整批替换）
+│   └── SysMenuService.java      # 菜单树组装（parentId 分组递归）
+├── controller\  UserController / RoleController / MenuController / PermissionController
+└── vo\          12 个 VO（见 3.5 节表格）
+```
+
+顺带修复的历史问题：启动类 `scanBasePackages = "com.aihub"` 扩大扫描——common 的 GlobalExceptionHandler 由此生效，业务异常返回统一 R 格式而不是原生 500。
 
 ---
 

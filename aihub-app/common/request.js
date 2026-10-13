@@ -30,6 +30,29 @@ export function getToken() {
 }
 
 /**
+ * 会话失效统一处理：网关对 token 过期/缺失返回 HTTP 401 + code:10002。
+ * 这里清除本地登录态并强制回到登录页，供 request() 与流式对话复用。
+ * 用 redirecting 标志位去重：并发请求同时收到 401 时只跳转一次。
+ */
+let redirecting = false
+export function handleUnauthorized() {
+  uni.removeStorageSync('token')
+  uni.removeStorageSync('userId')
+  if (redirecting) return
+  redirecting = true
+  uni.showToast({ title: '登录已过期，请重新登录', icon: 'none' })
+  uni.reLaunch({
+    url: '/pages/login/login',
+    complete: () => setTimeout(() => { redirecting = false }, 800)
+  })
+}
+
+/** 判断响应是否为「未授权/登录过期」：HTTP 401 或业务码 10002 */
+function isUnauthorized(res) {
+  return res.statusCode === 401 || (res.data && res.data.code === 10002)
+}
+
+/**
  * 通用请求（带 JWT）。返回响应体中的 data 部分。
  *
  * 判断成功的条件有两个，缺一不可：
@@ -49,6 +72,10 @@ export function request(method, path, data) {
       success: (res) => {
         if (res.statusCode === 200 && res.data && res.data.code === 0) {
           resolve(res.data.data)
+        } else if (isUnauthorized(res)) {
+          // token 过期：跳转登录页，同时 reject 让调用方停止后续处理
+          handleUnauthorized()
+          reject(new Error('登录已过期'))
         } else {
           reject(new Error((res.data && res.data.message) || '请求失败'))
         }

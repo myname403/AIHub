@@ -55,6 +55,31 @@ R<QuotaResult> r = platformClient.consume(req);   // 实际发了一次 HTTP！
 - `@RequestParam("x")`：拼到 URL 问号后面；
 - `@RequestBody`：对象转 JSON 放进请求体（POST）。
 
+**最小 demo——同一个接口"声明"与"实现"的镜像关系**：
+
+```java
+// aihub-api 里声明（调用方的视角）
+@FeignClient(name = "aihub-platform-service", path = "/internal")
+public interface PlatformClient {
+    @PostMapping("/quota/consume")
+    R<QuotaResult> consume(@RequestBody QuotaConsumeRequest request);
+}
+
+// aihub-platform-service 里实现（提供方的视角）——路径/参数必须一一对应
+@RestController
+@RequestMapping("/internal")
+public class InternalController {
+    @PostMapping("/quota/consume")          // ← 对应声明里的 path
+    public R<PlatformClient.QuotaResult> consume(@RequestBody PlatformClient.QuotaConsumeRequest req) {
+        return R.ok(quotaService.consume(req));
+    }
+}
+
+// AI 服务里的调用——就像调本地方法，背后是一次 HTTP
+R<QuotaResult> r = platformClient.consume(request);
+if (!r.getData().allowed()) throw new BizException(QUOTA_EXCEEDED, r.getData().reason());
+```
+
 ---
 
 ## 3. 逐类精讲

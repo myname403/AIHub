@@ -7,6 +7,7 @@ import com.aihub.ai.domain.model.AgentResult;
 import com.aihub.ai.domain.model.AgentTask;
 import com.aihub.ai.domain.model.ArtifactInfo;
 import com.aihub.ai.domain.model.BrowserException;
+import com.aihub.ai.domain.model.SequencedSink;
 import com.aihub.ai.domain.spi.Agent;
 import com.aihub.ai.domain.spi.AgentCancelRegistry;
 import com.aihub.ai.domain.spi.AgentTaskRepository;
@@ -103,6 +104,8 @@ public class BrowserAgent extends BaseAgent {
 
     @Override
     public AgentResult execute(AgentTask task, StreamSink sink) {
+        // 事件序号统一交给 SequencedSink（of() 对已包装实例原样复用，与规划层共享同一序号器）
+        SequencedSink seq = SequencedSink.of(sink);
         AgentBudget budget = task.budget() == null ? defaultBudget() : task.budget();
         AgentTask root = task.withBudget(budget);
         List<ArtifactInfo> artifacts = new ArrayList<>();
@@ -112,7 +115,7 @@ public class BrowserAgent extends BaseAgent {
 
         AgentResult result;
         try {
-            result = run(root, sink, index, artifacts, taskId);
+            result = run(root, seq, index, artifacts, taskId);
         } catch (AgentBudgetExceededException e) {
             log.warn("浏览器 Agent 预算终止: {}", e.getMessage());
             result = new AgentResult(AgentResult.BUDGET_EXCEEDED, e.getMessage(), artifacts);
@@ -129,7 +132,7 @@ public class BrowserAgent extends BaseAgent {
         return result;
     }
 
-    private AgentResult run(AgentTask root, StreamSink sink, int[] index,
+    private AgentResult run(AgentTask root, SequencedSink sink, int[] index,
                             List<ArtifactInfo> artifacts, Long taskId) {
         if (cancelRegistry.isCanceled(root.conversationId())) {
             step(sink, index, "observe", "任务已被用户取消");
@@ -272,7 +275,7 @@ public class BrowserAgent extends BaseAgent {
     }
 
     /** 广播步骤事件的同时落库（事件给前端时间线，落库给审计与回放） */
-    private void emit(StreamSink sink, int[] index, AgentTask task, Long taskId,
+    private void emit(SequencedSink sink, int[] index, AgentTask task, Long taskId,
                       String type, String content) {
         step(sink, index, type, content);
         taskRepository.appendStep(task.tenantId(), taskId, index[0], type, name(), content, 0L);

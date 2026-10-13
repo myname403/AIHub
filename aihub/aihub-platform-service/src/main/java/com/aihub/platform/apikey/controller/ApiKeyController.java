@@ -60,6 +60,7 @@ public class ApiKeyController {
      * <p><b>明文只在本响应里出现一次</b>，之后系统无法找回（库里只有哈希）——
      * 这是与用户沟通的关键交互：前端必须弹出"请立即保存"提示。
      */
+    // @Valid：触发参数校验，非受检异常，会抛出 MethodArgumentNotValidException
     @PostMapping
     public R<Map<String, Object>> issue(@Valid @RequestBody IssueRequest request) {
         // 租户从 ThreadLocal 上下文取（网关写入的 X-Tenant-Id → TenantResolveInterceptor → 这里）

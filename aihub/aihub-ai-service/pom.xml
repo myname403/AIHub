@@ -64,6 +64,14 @@
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-starter-model-openai</artifactId>
         </dependency>
+        <!-- ★ 流式关键：Spring AI 的 OpenAI 客户端基于 WebClient。若 classpath 没有 Reactor Netty，
+             Spring Boot 会退回 JDK HttpClient 连接器，它会把 SSE/分块响应聚合成整块再返回，
+             导致“思考/回答”在最后一次性涌出（不流式）。引入 reactor-netty-http 让 WebClient
+             改用 ReactorClientHttpConnector，逐块增量下发。版本由 Spring Boot BOM 管理。 -->
+        <dependency>
+            <groupId>io.projectreactor.netty</groupId>
+            <artifactId>reactor-netty-http</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-starter-vector-store-redis</artifactId>

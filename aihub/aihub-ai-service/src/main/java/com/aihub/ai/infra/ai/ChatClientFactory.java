@@ -189,12 +189,19 @@ public class ChatClientFactory {
             systemPrompt = systemPrompt + " /no_think";
         }
 
-        ChatClient client = ChatClient.builder(resolved.chatModel())
-                .defaultSystem(systemPrompt)
-                .defaultAdvisors(
-                        MessageChatMemoryAdvisor.builder(chatMemory).build(),
-                        // 审计 Advisor：call() 与 stream() 双路径都留痕（见 06 号文档 R9）
-                        new AuditAdvisor())
+        // 会话记忆 Advisor 只挂对话类场景（chat/rag）：agent-plan 等内部编排场景没有会话语义，
+        // 挂上后记忆 Advisor 以默认键 "default" 读写 DbChatMemory，直接抛"非法会话键"，
+        // 且编排中间产物也不该混进用户会话历史
+        boolean conversational = "chat".equals(scene) || "rag".equals(scene);
+
+        ChatClient.Builder builder = ChatClient.builder(resolved.chatModel())
+                .defaultSystem(systemPrompt);
+        if (conversational) {
+            builder.defaultAdvisors(MessageChatMemoryAdvisor.builder(chatMemory).build());
+        }
+        ChatClient client = builder
+                // 审计 Advisor：call() 与 stream() 双路径都留痕（见 06 号文档 R9）
+                .defaultAdvisors(new AuditAdvisor())
                 // 工具（M3）：内置工具 + MCP 外部工具，统一包装审计后挂载
                 .defaultToolCallbacks(buildToolCallbacks())
                 .build();

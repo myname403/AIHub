@@ -53,7 +53,8 @@ services:
     image: nacos/nacos-server:v3.0.3
     container_name: aihub-nacos
     ports:
-      - "8848:8848"   # HTTP / 控制台
+      - "8848:8848"   # HTTP / OpenAPI（context path 为 /nacos）
+      - "18080:8080"   # Nacos 3.x 控制台端口（容器 8080 映射到宿主 18080，避开网关），浏览器访问 http://127.0.0.1:18080
       - "9848:9848"   # 客户端 gRPC
       - "9849:9849"   # 服务端 gRPC
     environment:
@@ -70,7 +71,8 @@ services:
     volumes:
       - nacos-data:/home/nacos/data
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:8848/index.html >/dev/null || exit 1"]
+      # Nacos 3.x：控制台在 8080，API 在 8848/nacos
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:8080/index.html >/dev/null || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 15

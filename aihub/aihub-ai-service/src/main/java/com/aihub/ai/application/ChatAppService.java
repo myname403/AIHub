@@ -6,6 +6,8 @@ import com.aihub.ai.domain.model.AgentTask;
 import com.aihub.ai.domain.model.ChatTurn;
 import com.aihub.ai.domain.model.EventTypes;
 import com.aihub.ai.domain.model.MessageReference;
+import com.aihub.ai.domain.model.SequencedSink;
+import com.aihub.ai.domain.model.StreamBridge;
 import com.aihub.ai.domain.model.StreamEvent;
 import com.aihub.ai.domain.spi.Agent;
 import com.aihub.ai.domain.spi.AgentRegistry;
@@ -23,6 +25,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -71,7 +74,7 @@ public class ChatAppService {
         checkQuota(turn);                       // ① 闸门：超限抛 QUOTA_EXCEEDED，请求到此为止
         if (SCENE_AGENT.equals(turn.scene())) {
             consumeAgentTask(turn);             // ②a Agent 多步执行成本高，先扣 1 个 task 配额
-            return runAgent(turn, null);        //    null sink = 同步模式，不发流式事件
+            return runAgent(turn, null).answer(); // null sink = 同步模式，不发流式事件
         }
         StreamResult result = chatExecutor.call(turn);   // ②b 委托执行器（含 RAG 增强 + Spring AI 调用）
         reportUsage(turn, result);              // ③ 流水上报（审计/看板用）
@@ -96,11 +99,7 @@ public class ChatAppService {
                 return;
             }
             if (SCENE_AGENT.equals(turn.scene())) {
-                if (!consumeAgentTaskOrEmit(turn, sink)) {
-                    return;   // task 配额超限：error 事件已发出，不再执行 Agent
-                }
-                String answer = runAgent(turn, sink);
-                reportUsage(turn, StreamResult.of(answer, "", 0L));
+                runAgentStream(turn, sink);
                 return;
             }
             StreamResult result = chatExecutor.stream(turn, sink);
@@ -109,6 +108,47 @@ public class ChatAppService {
         } catch (Exception e) {
             // 执行器已发出 error 事件并关闭 sink；此处仅记录，避免向上抛断开连接
             log.warn("流式对话结束（含失败）conv={}", turn.conversationId());
+        }
+    }
+
+    /**
+     * Agent 流式路径：补齐与 chat/rag 场景对齐的事件帧序列。
+     *
+     * <p>子 Agent 只广播 agent.step / artifact，最终答案存在 AgentResult.answer 里从不
+     * 以 token 下发，msg.end 也缺失 —— 前端表现为气泡空白、光标永远闪烁、输入框锁死。
+     * 这里统一补发：msg.start（带会话 ID，前端据此支持"停止"）→
+     * （编排过程事件由 PlanningAgent 发）→ 答案 token → msg.end。
+     *
+     * <p><b>序号与桥（本期重构要点）：</b>
+     * <ul>
+     *   <li>{@link SequencedSink}：一次会话包装一次，全链路（编排/规划/子 Agent/工具）
+     *       共享同一事件序号器——此前各层各自 int[] 计数，事件 index 全局重复，
+     *       前端无法用它去重/排序；</li>
+     *   <li>{@link StreamBridge}：桥生命周期归编排层（谁发起会话谁清理，finally 保证
+     *       线程池线程不被残留污染）。Agent 链路里模型调用的工具靠它发出
+     *       tool.start / tool.end 事件；BaseAgent 记录的实际模型编码也从桥上取。</li>
+     * </ul>
+     */
+    private void runAgentStream(ChatTurn turn, StreamSink sink) {
+        SequencedSink seq = SequencedSink.of(sink);
+        long start = System.currentTimeMillis();
+        StreamBridge.set(seq);
+        try {
+            seq.emit(StreamEvent.MSG_START, Map.of("conversationId", turn.conversationId()));
+            if (!consumeAgentTaskOrEmit(turn, seq)) {
+                return;   // task 配额超限：error 事件已发出，不再执行 Agent
+            }
+            AgentResult result = runAgent(turn, seq);
+            String model = result.modelCode() == null ? "" : result.modelCode();
+            reportUsage(turn, StreamResult.of(result.answer(), model, 0L));
+            if (result.answer() != null && !result.answer().isBlank()) {
+                seq.emit(StreamEvent.TOKEN, Map.of("content", result.answer()));
+            }
+            seq.emit(StreamEvent.MSG_END, Map.of(
+                    "costMs", System.currentTimeMillis() - start,
+                    "model", model));
+        } finally {
+            StreamBridge.clear();
         }
     }
 
@@ -229,14 +269,14 @@ public class ChatAppService {
      * 规划 Agent 执行：拆解 → 派发 → 汇总（对齐课程 ReActPlanningAgent）。
      * <p>AgentTask 参数顺序（记录类按位置传参）：tenantId, userId, appId, conversationId, userText。
      * PlanningAgent 内部再按预算把目标拆成子任务链派给 table/chart/html 执行 Agent。
+     * 返回完整 AgentResult（答案 + 产物 + 模型编码），调用方按需取用。
      */
-    private String runAgent(ChatTurn turn, StreamSink sink) {
+    private AgentResult runAgent(ChatTurn turn, StreamSink sink) {
         Agent planning = agentRegistry.lookup(AgentNames.PLANNING)
                 .orElseThrow(() -> new BizException(ResultCode.SYSTEM_ERROR, "规划 Agent 未注册"));
         AgentTask task = new AgentTask(
                 turn.tenantId(), turn.userId(), turn.appId(), turn.conversationId(), turn.userText());
-        AgentResult result = planning.execute(task, sink);
-        return result.answer();
+        return planning.execute(task, sink);
     }
 
     /**

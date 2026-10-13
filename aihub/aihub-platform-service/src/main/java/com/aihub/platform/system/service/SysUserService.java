@@ -20,7 +20,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
-import java.util.regex.Pattern;
 
 /**
  * 用户管理服务：管理员管理本租户的子用户（增删改/重置密码/分配角色）。
@@ -40,8 +39,8 @@ import java.util.regex.Pattern;
 @RequiredArgsConstructor
 public class SysUserService {
 
-    /** 用户名规则：与注册一致 */
-    private static final Pattern USERNAME_PATTERN = Pattern.compile("^\\w{3,32}$");
+    /** 用户名规则：与注册一致（已放宽：非空且不超过 32 位，不限字符类型） */
+    private static final int USERNAME_MAX_LENGTH = 32;
 
     private final SysUserMapper userMapper;
     private final SysUserRoleMapper userRoleMapper;
@@ -81,8 +80,9 @@ public class SysUserService {
     @Transactional(rollbackFor = Exception.class)
     public Long create(SysUserCreateReqVO reqVO) {
         Long tenantId = TenantContext.requireTenantId();
-        if (reqVO.getUsername() == null || !USERNAME_PATTERN.matcher(reqVO.getUsername()).matches()) {
-            throw new BizException(ResultCode.PARAM_ERROR, "用户名须为 3-32 位字母/数字/下划线");
+        String username = reqVO.getUsername();
+        if (username == null || username.isBlank() || username.length() > USERNAME_MAX_LENGTH) {
+            throw new BizException(ResultCode.PARAM_ERROR, "用户名不能为空且不超过 32 位");
         }
         if (reqVO.getPassword() == null || reqVO.getPassword().length() < 6 || reqVO.getPassword().length() > 64) {
             throw new BizException(ResultCode.PARAM_ERROR, "密码长度须为 6-64 位");

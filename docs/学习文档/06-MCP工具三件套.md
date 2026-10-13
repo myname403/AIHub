@@ -43,6 +43,22 @@ SSE 传输(9001)  stdio 传输(CLI)
 
 ## 2. 一次 MCP 工具调用的完整链路
 
+**最小 demo——MCP 的底层就是 JSON-RPC 对话**（本机可直接复现，三行完成一次握手）：
+
+```bash
+# 向 stdio 版 MCP Server 发一条 initialize 请求（stdin 进，stdout 出）
+echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+  "protocolVersion":"2024-11-05","capabilities":{},
+  "clientInfo":{"name":"test","version":"1.0"}}}' \
+| npx -y @modelcontextprotocol/server-filesystem E:/aihub-workspace
+
+# stdout 返回：{"result":{"protocolVersion":"2024-11-05",
+#   "capabilities":{"tools":{"listChanged":true}},
+#   "serverInfo":{"name":"secure-filesystem-server","version":"0.2.0"}}}
+```
+
+看到这坨 JSON 你就明白 MCP 的本质了：**stdio 传输 = 通过标准输入输出互发 JSON-RPC 消息**（框架帮你把"进程对话"包装成了工具协议）。SSE 传输只是把同样的 JSON 消息改走 HTTP 长连接。
+
 ```
 1. 客户端（Claude Desktop）连接 MCP Server → tools/list
    → 框架收集容器里的 ToolCallbackProvider Bean → 返回 4 个工具的名称+描述
@@ -116,6 +132,16 @@ Servlet `OncePerRequestFilter`（比拦截器更靠前，因为 /mcp/** 是框�
 5. **业务与传输分离**（ADR-3）：工具写一份，传输随便换。
 
 ---
+
+## 5.5 Windows 本地落地实录（本期实测）
+
+本地接入三个开源 MCP Server 后沉淀的三条硬经验（详见 07 文档 7 节）：
+
+1. **不要用 cmd/npx 包装启动**——stdio 握手会超时；直接用 `node.exe` 跑包的入口 js（npx 缓存路径是哈希不可靠）。包统一装固定目录（如 `E:\aihub\mcp-servers`）且**必须写入 package.json**（`npm install --no-save` 会裁掉旧包）；
+2. **MCP 协议版本要匹配**——Java SDK 0.17 只认 2024-11-05；`@mokei/mcp-fetch` 返回 2025-11-25 会被拒（Unsupported protocol version），换 `@kazuph/mcp-fetch` 通过；
+3. **路径避开中文**——stdio 子进程有 GBK/UTF-8 乱码风险，工作区固定 `E:\aihub-workspace`（目录外访问被 filesystem server 拒绝，属预期安全行为）。
+
+当前接入清单：filesystem（文件读写）、sequential-thinking（结构化推理）、web-fetch（网页抓取），全部 yml 配置即插即用（见 aihub-ai-service 的 spring.ai.mcp.client.stdio.connections）。
 
 ## 6. 学习自测
 

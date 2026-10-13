@@ -68,8 +68,8 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
      */
     public AuthGlobalFilter(@Value("${aihub.security.jwt-secret}") String jwtSecret,
                             ApiKeyCache apiKeyCache) {
-        this.secretKey = jwtSecret.getBytes(StandardCharsets.UTF_8);
-        this.apiKeyCache = apiKeyCache;
+        this.secretKey = jwtSecret.getBytes(StandardCharsets.UTF_8);// JWT 密钥字节数组，用于签名和验签
+        this.apiKeyCache = apiKeyCache;// API Key 校验客户端，带本地缓存
     }
 
     /**

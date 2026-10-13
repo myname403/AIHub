@@ -1,0 +1,56 @@
+{
+  "groups": [
+    {
+      "name": "spring.cloud.sentinel.scg",
+      "type": "com.alibaba.cloud.sentinel.gateway.scg.SentinelGatewayProperties",
+      "sourceType": "com.alibaba.cloud.sentinel.gateway.scg.SentinelGatewayProperties"
+    },
+    {
+      "name": "spring.cloud.sentinel.scg.fallback",
+      "type": "com.alibaba.cloud.sentinel.gateway.FallbackProperties",
+      "sourceType": "com.alibaba.cloud.sentinel.gateway.scg.SentinelGatewayProperties",
+      "sourceMethod": "getFallback()"
+    }
+  ],
+  "properties": [
+    {
+      "name": "spring.cloud.sentinel.scg.fallback.content-type",
+      "type": "java.lang.String",
+      "description": "Content-Type for `response` mode.",
+      "sourceType": "com.alibaba.cloud.sentinel.gateway.FallbackProperties"
+    },
+    {
+      "name": "spring.cloud.sentinel.scg.fallback.mode",
+      "type": "java.lang.String",
+      "description": "The fallback mode for sentinel spring-cloud-gateway. choose `redirect` or `response`.",
+      "sourceType": "com.alibaba.cloud.sentinel.gateway.FallbackProperties"
+    },
+    {
+      "name": "spring.cloud.sentinel.scg.fallback.redirect",
+      "type": "java.lang.String",
+      "description": "Redirect Url for `redirect` mode.",
+      "sourceType": "com.alibaba.cloud.sentinel.gateway.FallbackProperties"
+    },
+    {
+      "name": "spring.cloud.sentinel.scg.fallback.response-body",
+      "type": "java.lang.String",
+      "description": "Response Body for `response` mode.",
+      "sourceType": "com.alibaba.cloud.sentinel.gateway.FallbackProperties"
+    },
+    {
+      "name": "spring.cloud.sentinel.scg.fallback.response-status",
+      "type": "java.lang.Integer",
+      "description": "Response Status for `response` mode.",
+      "sourceType": "com.alibaba.cloud.sentinel.gateway.FallbackProperties"
+    },
+    {
+      "name": "spring.cloud.sentinel.scg.order",
+      "type": "java.lang.Integer",
+      "sourceType": "com.alibaba.cloud.sentinel.gateway.scg.SentinelGatewayProperties"
+    }
+  ],
+  "hints": [],
+  "ignored": {
+    "properties": []
+  }
+}

@@ -56,6 +56,46 @@ public R<SysUser> getUser(@PathVariable Long id) {
 }
 ```
 
+**最小 demo——体会"统一出口"的价值**。同一个接口，三种返回路径长什么样：
+
+```java
+// demo：三种返回路径（想象你是前端，收到这三种响应）
+// ① 成功：      HTTP 200  {"code":0,     "message":"成功",  "data":{"id":1}, "traceId":"9f3c"}
+// ② 业务失败：  HTTP 200  {"code":10002, "message":"用户名或密码错误", "traceId":"..."}
+//    ↑ 抛 BizException 后由全局异常处理器自动转换，前端只判 code
+// ③ 系统异常：  HTTP 200  {"code":50000, "message":"系统内部错误", "traceId":"..."}
+//    ↑ 任何未捕获异常兜底成这句——内部细节绝不泄露
+```
+
+**ThreadLocal 最小 demo**（TenantContext 的原理，三行看懂）：
+
+```java
+public class Demo {
+    static ThreadLocal<String> who = new ThreadLocal<>();
+
+    public static void main(String[] args) {
+        new Thread(() -> { who.set("线程A的数据"); sleep(100);       // ① A 线程存自己的
+            System.out.println(who.get()); })                        // ③ A 读到 A 的
+            .start();
+        new Thread(() -> { who.set("线程B的数据");
+            System.out.println(who.get()); })                        // ③ B 读到 B 的，互不干扰
+            .start();
+    }
+}
+// 忘了 who.remove() → 线程池复用线程时，下一个请求读到上一个请求的数据（串台事故）
+```
+
+**BCrypt 最小 demo**（为什么登录校验只需要 matches）：
+
+```java
+BCryptPasswordEncoder encoder = new BCryptPasswordEncoder();
+String hash1 = encoder.encode("123456");   // $2a$10$N.zmd...
+String hash2 = encoder.encode("123456");   // $2a$10$Xk9f...   ← 同一密码，两次哈希不同（自带随机盐）！
+encoder.matches("123456", hash1);          // true  —— 拿明文跟任一哈希比对即可
+encoder.matches("654321", hash1);          // false
+// 所以数据库存哈希就够：登录时拿用户输入的明文 matches 库里哈希
+```
+
 ### 2.2 ResultCode —— 响应码枚举（`result/ResultCode.java`）
 
 分段规则（**业务码 ≠ HTTP 状态码**，HTTP 永远 200，靠 body 里的 code 区分成败）：
@@ -137,7 +177,7 @@ Controller → Service → Mapper 任意深度，随手 getTenantId() 就能取�
 
 下游敢信任 `X-Tenant-Id` 头，是因为网关**保证**这个头只能由它写入（客户端伪造的会被剥离）。这叫"边界统一鉴权"。**任何时候都不要写接受前端传 tenantId 的代码**。
 
-**`requireTenantId()` vs `getTenantId()`**：前者缺失直接抛异常（fail-fast），用于"没有租户就没法干活"的写操作；后者允许 null，用于可选场景。
+**`requireTenantId()` vs `getTenantId()`**：前者缺失直接抛异常（fail-fast），用于"没有租户就没法干活"的写操作；后者允许 null，用于可选场景。同理 `requireUserId()`（本期新增）——管理端接口（用户/角色/菜单管理）必须"登录用户"身份：API Key 系统调用只有租户没有用户，会抛 10002 未认证。
 
 **注册方式**（在各服务的 `config/WebMvcConfig` 里）：
 

@@ -52,8 +52,8 @@ public class AuthService {
 
     /** 租户码规则：2-32 位字母/数字/下划线/中划线（会成为登录时的"公司标识"） */
     private static final Pattern TENANT_CODE_PATTERN = Pattern.compile("^[a-zA-Z0-9_-]{2,32}$");
-    /** 用户名规则：3-32 位字母/数字/下划线 */
-    private static final Pattern USERNAME_PATTERN = Pattern.compile("^\\w{3,32}$");
+    /** 用户名规则（已放宽，与前端 app 注册页一致）：非空且不超过 32 位，不限字符类型 */
+    private static final int USERNAME_MAX_LENGTH = 32;
 
     /** 注册内置角色编码：每个租户的第一个用户即该租户管理员 */
     public static final String ROLE_ADMIN_CODE = "ROLE_ADMIN";
@@ -146,8 +146,8 @@ public class AuthService {
         if (tenantCode == null || !TENANT_CODE_PATTERN.matcher(tenantCode).matches()) {
             throw new BizException(ResultCode.PARAM_ERROR, "租户码须为 2-32 位字母/数字/下划线/中划线");
         }
-        if (username == null || !USERNAME_PATTERN.matcher(username).matches()) {
-            throw new BizException(ResultCode.PARAM_ERROR, "用户名须为 3-32 位字母/数字/下划线");
+        if (username == null || username.isBlank() || username.length() > USERNAME_MAX_LENGTH) {
+            throw new BizException(ResultCode.PARAM_ERROR, "用户名不能为空且不超过 32 位");
         }
         if (password == null || password.length() < 6 || password.length() > 64) {
             throw new BizException(ResultCode.PARAM_ERROR, "密码长度须为 6-64 位");
@@ -199,6 +199,8 @@ public class AuthService {
         // ⑥ 角色授权全部菜单：查全部菜单 ID，逐条建关联
         List<Long> allMenuIds = menuMapper.selectList(null).stream()
                 .map(m -> m.getId()).toList();
+
+
         for (Long menuId : allMenuIds) {
             SysRoleMenuDO rm = new SysRoleMenuDO();
             rm.setRoleId(roleId);

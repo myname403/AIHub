@@ -3,6 +3,8 @@ package com.aihub.ai.infra.ai.agent;
 import com.aihub.ai.domain.model.AgentResult;
 import com.aihub.ai.domain.model.AgentTask;
 import com.aihub.ai.domain.model.ArtifactInfo;
+import com.aihub.ai.domain.model.SequencedSink;
+import com.aihub.ai.domain.model.StreamEvent;
 import com.aihub.ai.domain.spi.ArtifactStore;
 import com.aihub.ai.domain.spi.StreamSink;
 import com.aihub.ai.infra.ai.ChatClientFactory;
@@ -33,9 +35,10 @@ public abstract class GenerationAgent extends BaseAgent {
 
     @Override
     public AgentResult execute(AgentTask task, StreamSink sink) {
+        SequencedSink seq = SequencedSink.of(sink);
         int[] index = {0};
         try {
-            step(sink, index, "think", "准备生成：" + artifactName(task));
+            step(seq, index, "think", "准备生成：" + artifactName(task));
             String system = systemPrompt();
             String user = """
                     请根据以下任务内容生成结果，只输出完整 HTML，不要任何解释或代码块标记。
@@ -52,15 +55,17 @@ public abstract class GenerationAgent extends BaseAgent {
                     task.tenantId(), null, artifactName(task), "text/html",
                     html.getBytes(StandardCharsets.UTF_8));
 
-            step(sink, index, "observe", "产物已生成：" + artifact.previewUrl());
-            if (sink != null) {
-                sink.emit(com.aihub.ai.domain.model.StreamEvent.of(0, com.aihub.ai.domain.model.StreamEvent.ARTIFACT,
+            step(seq, index, "observe", "产物已生成：" + artifact.previewUrl());
+            if (seq != null) {
+                // 事件序号由 SequencedSink 统一编号（此前这里硬编码 index=0，与规划层事件撞号）
+                seq.emit(StreamEvent.ARTIFACT,
                         java.util.Map.of("name", artifact.name(),
-                                "url", artifact.previewUrl())));
+                                "url", artifact.previewUrl()));
             }
             String answer = "已生成「%s」，点击查看：%s".formatted(artifact.name(), artifact.previewUrl());
             return AgentResult.done(answer, List.of(artifact));
         } catch (Exception e) {
+            step(seq, index, "observe", "执行失败：" + e.getMessage());
             return fallback(task, e);
         }
     }

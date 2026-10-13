@@ -1,0 +1,14 @@
+sequenceDiagram
+  autonumber
+  participant C as 客户端
+  participant G as 网关
+  participant A as AI 服务
+  participant P as 平台服务
+  C->>G: 请求（JWT / API Key）
+  G->>G: 验签解析租户身份
+  G->>G: 剥离伪造租户头并覆盖
+  G->>A: 转发（可信租户头 + TraceId）
+  A->>P: Feign 扣减配额（透传租户头）
+  P-->>A: 校验结果
+  A->>A: 业务执行（强制租户条件）
+  A-->>C: 流式响应（携带 traceId）

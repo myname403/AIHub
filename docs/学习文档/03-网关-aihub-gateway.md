@@ -1,7 +1,7 @@
 # 03 · 网关 aihub-gateway —— 学习文档
 
 > 源码位置：`aihub/aihub-gateway`（端口 8080，5 个类 + application.yml）
-> 配套代码注释已逐行增强，建议对照源码阅读本文。
+> 配套代码注释已逐行增强，建议对照源码阅读本文。xx
 
 ---
 
@@ -75,6 +75,42 @@
 
 **chain.filter(exchange) 的含义**：把请求交给下一个过滤器；不调用而直接 `writeWith(...)` 就是"拦截，自己响应"。
 
+**最小 demo——自己写一个请求日志过滤器**（体会 GlobalFilter 的写法，十几行就能挂进网关）：
+
+```java
+@Component
+public class LogFilter implements GlobalFilter, Ordered {
+    @Override
+    public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
+        System.out.println("请求进入: " + exchange.getRequest().getPath());
+        long start = System.currentTimeMillis();
+        return chain.filter(exchange).then(Mono.fromRunnable(() ->
+            System.out.println("响应完成: " + (System.currentTimeMillis() - start) + "ms")
+        ));   // then(...) = 下游全部处理完之后回调（前置/后置逻辑的分界线）
+    }
+    @Override
+    public int getOrder() { return 0; }
+}
+// 放进网关组件扫描范围即自动生效——网关会自动收集所有 GlobalFilter Bean 并按 Order 排序
+```
+
+**curl 对比实验**（体会鉴权过滤器在做什么，可在本机直接复现）：
+
+```bash
+# ① 不带 token → 网关直接 401（AuthGlobalFilter 拦下，请求根本没到下游服务）
+curl -i http://localhost:8080/api/ai/chat -X POST
+#    HTTP/1.1 401 ... {"code":10002,"message":"缺少认证令牌"}
+
+# ② 伪造租户头 + 无效 token → 仍 401（伪头被剥离，凭证解析失败）
+curl -i http://localhost:8080/api/ai/chat -X POST \
+  -H "X-Tenant-Id: 9999" -H "Authorization: Bearer fake.fake"
+
+# ③ 合法 token → 200，响应头里能看到网关注入的 X-Trace-Id
+curl -i http://localhost:8080/api/ai/chat -X POST \
+  -H "Authorization: Bearer <登录拿到的token>" \
+  -H "Content-Type: application/json" -d '{"message":"hi"}'
+```
+
 ### 3.3 AuthGlobalFilter —— 鉴权（★ 全系统安全核心）
 
 **主流程**：
@@ -136,6 +172,17 @@ spring.main.web-application-type: reactive # 显式声明响应式应用（用 W
 
 spring.cloud.nacos.discovery.*             # 服务注册发现：把网关自己注册进 Nacos
 spring.cloud.nacos.config.*                # 配置中心：从 Nacos 拉配置
+
+spring.cloud.gateway.globalcors            # ★ 全局 CORS（本期新增，实测踩坑补上）
+  cors-configurations.'[/**]'              #   对所有路径生效
+    allowedOriginPatterns: "*"             #   允许的来源（生产应收紧为具体域名）
+    allowed-methods / allowed-headers: "*" #   方法与请求头全放行（含 Authorization）
+    exposed-headers: "X-Trace-Id"          #   允许前端读到的响应头
+    maxAge: 3600                           #   预检结果缓存 1 小时
+#   为什么必须有：前端(5173)与网关(8080)不同端口就是不同源，浏览器发正式请求前
+#   会先发 OPTIONS 预检；不放行预检，所有跨域请求被浏览器拦截（登录页表现为
+#   "网络错误"，接口 curl 通但页面死活不通就是它）。判断方法：F12 看到
+#   红色 OPTIONS 请求或 Console 有 CORS policy 字样 → 查这里。
 
 spring.cloud.gateway.routes                # ★ 路由表
   - id: aihub-platform                     #   路由 ID（唯一标识）
@@ -214,6 +261,7 @@ logging.pattern.console                    # ★ %X{traceId:--}：每行日志�
 | 网关里写阻塞调用 | 偶发全体请求卡死 | 换 WebClient/Mono 链 |
 | 401 但不知道哪错了 | 前端只有 code 10002 | 看响应体 traceId → 网关日志 |
 | 限流规则改了没生效 | 还是旧阈值 | 规则在 Nacos（aihub-gateway-flow-rules），不是 dashboard 单改 |
+| 接口 curl 通、页面不通 | 前端报网络错误，F12 见红色 OPTIONS | CORS 预检被拦，检查 globalcors 配置 |
 | 忘了 lb:// 前缀 | uri 当成静态地址直连 | lb:// = 从 Nacos 负载均衡 |
 
 ---

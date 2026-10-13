@@ -1,0 +1,9 @@
+flowchart TB
+  A[管理员创建角色<br/>sys_role 按租户隔离] --> C[勾选菜单授权<br/>sys_role_menu]
+  C --> D[用户绑定角色<br/>sys_user_role]
+  D ~~~ E[权限解析链<br/>用户 → 角色 → 菜单 → 权限集合]
+  E --> F[(Caffeine 缓存<br/>授权变更即时失效)]
+  E --> J[登录拉取菜单树<br/>管理端动态注册路由]
+  F --> G{标注 @RequirePermission?}
+  G -- 在权限集内 --> H[放行业务]
+  G -- 不在 --> I[403 无操作权限]

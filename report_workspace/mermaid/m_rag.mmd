@@ -1,0 +1,10 @@
+flowchart TB
+  Q[用户提问] --> E[嵌入向量化<br/>embeddinggemma 本地部署]
+  E --> V[(Redis Stack 向量检索)]
+  V --> F[元数据强制过滤<br/>tenant_id + kb_id]
+  F ~~~ G{出口租户校验<br/>逐条比对}
+  G -- 跨租户 --> X[丢弃并告警]
+  G -- 命中 --> C[提示词组装<br/>防幻觉约束 + n 号引用]
+  C --> L[大模型流式生成<br/>云端主 · 本地备]
+  L --> S[流式渲染 + 引用卡片]
+  L --> M[Token 计量与配额扣减]

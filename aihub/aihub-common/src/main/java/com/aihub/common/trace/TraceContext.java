@@ -98,7 +98,7 @@ public final class TraceContext {
      */
     public static Runnable wrap(Runnable task) {
         // 提交任务时（主线程）读取当前 traceId，闭包捕获这个值
-        String traceId = HOLDER.get();
+        String traceId = HOLDER.get();//进行获取相关的主线程的id
         return () -> {
             // 记住执行线程原有的值（可能为 null），任务结束后还原
             String previous = HOLDER.get();
@@ -107,7 +107,7 @@ public final class TraceContext {
                 task.run();
             } finally {
                 // 还原调用前状态，避免污染复用的工作线程
-                set(previous);
+                set(previous);//最后每次都会执行，进入执行新线程的时候先取出，然后最后给这里打上去
             }
         };
     }

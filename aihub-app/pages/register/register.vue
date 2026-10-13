@@ -92,6 +92,10 @@ export default {
         uni.showToast({ title: '请填写完整信息', icon: 'none' })
         return
       }
+      if (f.username.trim().length === 0 || f.username.length > 32) {
+        uni.showToast({ title: '用户名不能为空且不超过 32 位', icon: 'none' })
+        return
+      }
       if (f.password !== f.password2) {
         uni.showToast({ title: '两次密码不一致', icon: 'none' })
         return

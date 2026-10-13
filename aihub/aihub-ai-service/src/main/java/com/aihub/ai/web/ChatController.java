@@ -89,7 +89,7 @@ public class ChatController {
     @PostMapping("/chat")
     public R<Map<String, Object>> chat(@Valid @RequestBody ChatRequest request) {
         ChatTurn turn = turn(request);
-        long start = System.currentTimeMillis();
+        long start = System.currentTimeMillis();//返回当前的时间戳
         String content = chatAppService.chat(turn);
         Map<String, Object> data = new HashMap<>();
         data.put("conversationId", turn.conversationId());

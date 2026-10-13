@@ -6,6 +6,9 @@ import com.aihub.ai.domain.model.AgentNames;
 import com.aihub.ai.domain.model.AgentResult;
 import com.aihub.ai.domain.model.AgentTask;
 import com.aihub.ai.domain.model.ArtifactInfo;
+import com.aihub.ai.domain.model.SequencedSink;
+import com.aihub.ai.domain.model.StreamBridge;
+import com.aihub.ai.domain.model.StreamEvent;
 import com.aihub.ai.domain.spi.Agent;
 import com.aihub.ai.domain.spi.AgentCancelRegistry;
 import com.aihub.ai.domain.spi.AgentRegistry;
@@ -81,6 +84,8 @@ public class PlanningAgent extends BaseAgent {
 
     @Override
     public AgentResult execute(AgentTask task, StreamSink sink) {
+        // 事件序号统一交给 SequencedSink（此前各 Agent 各自计数导致事件 index 全局重复）
+        SequencedSink seq = SequencedSink.of(sink);
         AgentBudget budget = task.budget() == null ? defaultBudget() : task.budget();
         AgentTask root = task.withBudget(budget);
         List<ArtifactInfo> artifacts = new ArrayList<>();
@@ -90,13 +95,17 @@ public class PlanningAgent extends BaseAgent {
 
         AgentResult result = null;
         try {
-            result = run(root, sink, index, artifacts, taskId);
+            result = run(seq, root, index, artifacts, taskId);
         } catch (AgentBudgetExceededException e) {
             log.warn("Agent 预算终止: {}", e.getMessage());
+            step(seq, index, "observe", "预算终止：" + e.getMessage());
             result = new AgentResult(AgentResult.BUDGET_EXCEEDED, e.getMessage(), artifacts);
         } catch (BizException e) {
+            // 失败也要广播：不发声的话前端时间线与气泡全程空白，用户只能干等
+            step(seq, index, "observe", "执行失败：" + e.getMessage());
             result = fallback(root, e);
         } catch (Exception e) {
+            step(seq, index, "observe", "执行失败：" + e.getMessage());
             result = fallback(root, e);
         } finally {
             // 防御：上面的 catch 只覆盖 Exception，若 run() 抛出 Error（OutOfMemoryError 等）
@@ -112,10 +121,11 @@ public class PlanningAgent extends BaseAgent {
                 aiMetrics.recordAgentTask(finished.status());
             }
         }
-        return result;
+        // 出口统一补模型编码：msg.end 事件据此带出真实模型（此前恒为空串）
+        return withModel(result);
     }
 
-    private AgentResult run(AgentTask root, StreamSink sink, int[] index,
+    private AgentResult run(SequencedSink sink, AgentTask root, int[] index,
                             List<ArtifactInfo> artifacts, Long taskId) {
         if (cancelRegistry.isCanceled(root.conversationId())) {
             step(sink, index, "observe", "任务已被用户取消");
@@ -126,6 +136,8 @@ public class PlanningAgent extends BaseAgent {
         emit(sink, index, root, taskId, "think",
                 "任务拆解为 " + subTasks.size() + " 个子任务："
                         + subTasks.stream().map(SubTask::agent).toList());
+        // 结构化计划事件：前端渲染成可勾选的任务清单，随 agent.task.done 逐项打勾
+        emitPlan(sink, subTasks);
 
         StringBuilder answer = new StringBuilder();
         int done = 0;
@@ -152,14 +164,17 @@ public class PlanningAgent extends BaseAgent {
             emit(sink, index, root, taskId, "act", agent.name() + " 执行：" + sub.task());
             long stepStart = System.currentTimeMillis();
             AgentResult result = agent.execute(root.subTask(sub.task()), sink);
+            long stepCost = System.currentTimeMillis() - stepStart;
             taskRepository.appendStep(root.tenantId(), taskId, index[0], "observe", agent.name(),
-                    result.answer(), System.currentTimeMillis() - stepStart);
+                    result.answer(), stepCost);
             if (result.artifacts() != null) {
                 artifacts.addAll(result.artifacts());
             }
             answer.append("【").append(agent.name()).append("】")
                     .append(result.answer()).append("\n\n");
             done++;
+            // 单个子任务完成事件（带状态与耗时）：计划清单逐项打勾的依据
+            emitTaskDone(sink, done - 1, agent.name(), sub.task(), stepCost, result.status());
         }
 
         emit(sink, index, root, taskId, "observe", "全部子任务执行完成");
@@ -167,10 +182,44 @@ public class PlanningAgent extends BaseAgent {
     }
 
     /** 广播步骤事件的同时落库（事件给前端时间线，落库给审计与回放） */
-    private void emit(StreamSink sink, int[] index, AgentTask task, Long taskId,
+    private void emit(SequencedSink sink, int[] index, AgentTask task, Long taskId,
                       String type, String content) {
         step(sink, index, type, content);
         taskRepository.appendStep(task.tenantId(), taskId, index[0], type, name(), content, 0L);
+    }
+
+    /** 计划清单事件：tasks = [{agent, task}]，顺序即执行顺序 */
+    private void emitPlan(SequencedSink sink, List<SubTask> subTasks) {
+        if (sink == null || subTasks.isEmpty()) {
+            return;
+        }
+        sink.emit(StreamEvent.AGENT_PLAN, java.util.Map.of("tasks", subTasks.stream()
+                .map(t -> java.util.Map.of("agent", t.agent(), "task", t.task()))
+                .toList()));
+    }
+
+    /** 子任务完成事件：前端按 index 对号入座更新计划清单（状态/耗时） */
+    private void emitTaskDone(SequencedSink sink, int taskIndex, String agent,
+                              String task, long costMs, String status) {
+        if (sink == null) {
+            return;
+        }
+        sink.emit(StreamEvent.AGENT_TASK_DONE, java.util.Map.of(
+                "index", taskIndex,
+                "agent", agent == null ? "" : agent,
+                "task", task == null ? "" : task,
+                "costMs", costMs,
+                "status", status == null ? "" : status));
+    }
+
+    /** 结果补模型编码：桥上记录的是最后一次 LLM 调用实际用的模型（失败/取消可能为 null，原样返回） */
+    private AgentResult withModel(AgentResult result) {
+        String model = StreamBridge.model();
+        if (result == null || model == null || model.isBlank()
+                || result.modelCode() != null && !result.modelCode().isBlank()) {
+            return result;
+        }
+        return new AgentResult(result.status(), result.answer(), result.artifacts(), model);
     }
 
     private AgentBudget defaultBudget() {

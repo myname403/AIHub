@@ -1,5 +1,5 @@
 import config from './config.js'
-import { getToken } from './request.js'
+import { getToken, handleUnauthorized } from './request.js'
 
 /**
  * 流式对话（NDJSON Chunked 双端统一封装）。
@@ -8,8 +8,19 @@ import { getToken } from './request.js'
  * - 小程序：uni.request({ enableChunked: true }) + onChunkReceived
  *
  * 两端均按 \n 切分事件帧并处理半包，回调 onEvent(事件帧对象)。
- * 事件类型：msg.start / token / rag.sources / agent.step / artifact / msg.end / error
+ * 事件类型：msg.start / token / reasoning / rag.sources / agent.step / agent.plan /
+ * agent.task.done / tool.start / tool.end / artifact / msg.end / error
+ *
+ * **传输层兜底事件（正确性保障，业务语义由 chat.vue 判断）：**
+ * - `__transport.end`：连接正常关闭。若前端此时还没收到 msg.end/error，
+ *   说明服务端异常断流（网关超时/进程重启），必须补一个本地终态，
+ *   否则 streaming 永远卡在 true、输入框锁死——这是真实发生过的事故形态。
+ * - `__transport.timeout`：空闲看门狗触发（IDLE_TIMEOUT 内一帧都没到），
+ *   主动断开并上报，防止"思考中"永久转圈。
+ * - `__transport.abort`：调用方主动 abort（点停止），前端已自行清理状态，无需再处理。
  */
+const IDLE_TIMEOUT = 90000
+
 export function streamChat({ appId = 0, conversationId = '', message, scene, modelCode = '' }, onEvent) {
   // modelCode 可选：前端模型切换器指定时后端优使用该模型，空 = 走管理端场景路由
   const body = JSON.stringify({
@@ -26,6 +37,28 @@ export function streamChat({ appId = 0, conversationId = '', message, scene, mod
   let buffer = ''
   // H5 侧的中断句柄（AbortController 只能在 H5 用；小程序侧用 task.abort()）
   let h5Controller = null
+  let mpTask = null
+  // 兜底状态：finished 保证 transport 终态事件只发一次；idleTimer 看门狗句柄
+  let finished = false
+  let idleTimer = null
+
+  const clearIdle = () => {
+    if (idleTimer) {
+      clearTimeout(idleTimer)
+      idleTimer = null
+    }
+  }
+
+  /** 看门狗：连续 IDLE_TIMEOUT 没有任何帧 → 断开并通知（服务端卡死/中间层静默吞流） */
+  const armIdle = () => {
+    clearIdle()
+    idleTimer = setTimeout(() => {
+      if (finished) return
+      finished = true
+      abort()
+      onEvent({ e: '__transport.timeout', data: {} })
+    }, IDLE_TIMEOUT)
+  }
 
   const emitLine = (line) => {
     const trimmed = line.trim()
@@ -38,6 +71,7 @@ export function streamChat({ appId = 0, conversationId = '', message, scene, mod
   }
 
   const handleChunk = (text) => {
+    armIdle()
     buffer += text
     const lines = buffer.split('\n')
     buffer = lines.pop() || '' // 最后一段可能是半包，留到下一块
@@ -54,6 +88,15 @@ export function streamChat({ appId = 0, conversationId = '', message, scene, mod
     emitLine(rest)
   }
 
+  /** 传输层终态：无论服务端是否发过 msg.end，连接关闭这件事本身要告知上层 */
+  const finish = () => {
+    if (finished) return
+    finished = true
+    clearIdle()
+    flush()
+    onEvent({ e: '__transport.end', data: {} })
+  }
+
   // #ifdef H5
   h5Controller = new AbortController()
   fetch(config.baseUrl + '/api/ai/chat/ndjson', {
@@ -63,9 +106,14 @@ export function streamChat({ appId = 0, conversationId = '', message, scene, mod
     signal: h5Controller.signal
   }).then(async (res) => {
     if (res.status === 401) {
+      // 登录过期：提示并自动跳回登录页
+      finished = true
+      clearIdle()
+      handleUnauthorized()
       onEvent({ e: 'error', data: { message: '登录已过期' } })
       return
     }
+    armIdle()
     const reader = res.body.getReader()
     const decoder = new TextDecoder('utf-8')
     for (;;) {
@@ -73,26 +121,54 @@ export function streamChat({ appId = 0, conversationId = '', message, scene, mod
       if (done) break
       handleChunk(decoder.decode(value, { stream: true }))
     }
-    flush()
+    finish()
   }).catch((err) => {
-    // 用户点"停止"触发的中断不是错误，不弹提示
-    if (err && err.name === 'AbortError') return
+    if (finished) return
+    // 用户点"停止"触发的中断不是错误，只发 abort 事件供上层对齐状态
+    if (err && err.name === 'AbortError') {
+      finished = true
+      clearIdle()
+      onEvent({ e: '__transport.abort', data: {} })
+      return
+    }
+    finished = true
+    clearIdle()
     onEvent({ e: 'error', data: { message: '连接失败：' + err.message } })
   })
   // #endif
 
   // #ifdef MP-WEIXIN
-  const task = uni.request({
+  mpTask = uni.request({
     url: config.baseUrl + '/api/ai/chat/ndjson',
     method: 'POST',
     header,
     data: body,
     enableChunked: true,
     responseType: 'arraybuffer',
-    success: () => flush(),
-    fail: (err) => onEvent({ e: 'error', data: { message: '连接失败：' + (err.errMsg || '') } })
+    success: (res) => {
+      if (res && res.statusCode === 401) {
+        finished = true
+        clearIdle()
+        handleUnauthorized()
+        onEvent({ e: 'error', data: { message: '登录已过期' } })
+        return
+      }
+      finish()
+    },
+    fail: (err) => {
+      if (finished) return
+      finished = true
+      clearIdle()
+      // 小程序侧 task.abort() 触发的 fail 不是错误，对齐 H5 的 AbortError 语义：
+      // 调用方点"停止"时这里只发 abort 事件，避免把主动中断渲染成"连接失败"
+      if (err && err.errMsg && String(err.errMsg).indexOf('abort') >= 0) {
+        onEvent({ e: '__transport.abort', data: {} })
+        return
+      }
+      onEvent({ e: 'error', data: { message: '连接失败：' + (err.errMsg || '') } })
+    }
   })
-  task.onChunkReceived((res) => {
+  mpTask.onChunkReceived((res) => {
     if (res && res.data) {
       handleChunk(arrayBufferToUtf8(res.data))
     }
@@ -109,7 +185,7 @@ export function streamChat({ appId = 0, conversationId = '', message, scene, mod
     if (h5Controller) h5Controller.abort()
     // #endif
     // #ifdef MP-WEIXIN
-    task && task.abort()
+    mpTask && mpTask.abort()
     // #endif
   }
 }

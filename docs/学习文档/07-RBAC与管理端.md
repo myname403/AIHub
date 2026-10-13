@@ -52,6 +52,38 @@ Caffeine 缓存 10 分钟；授权变更时 `invalidateRole/invalidateUser` 主�
 **执行顺序**：TraceId(0) → Tenant(1) → Permission(2)（权限依赖租户上下文）。
 未标注解的接口默认只要求登录态（芋道同款宽松策略）。
 
+**curl demo——同一接口两种身份的不同结果**（可复现，直观感受 RBAC）：
+
+```bash
+# ① 管理员 boss（有 ROLE_ADMIN → 权限码含 system:user:create）→ 新增成功
+curl -X POST http://localhost:8080/api/platform/system/user \
+  -H "Authorization: Bearer $BOSS_TOKEN" -H "Content-Type: application/json" \
+  -d '{"username":"staff2","password":"staff123456"}'
+# → {"code":0,"data":2098790430627844098}
+
+# ② 新注册的子用户（没绑任何角色 → 权限码是空数组 []）→ 同一接口被拒
+curl -X POST http://localhost:8080/api/platform/system/user \
+  -H "Authorization: Bearer $STAFF_TOKEN" -H "Content-Type: application/json" \
+  -d '{"username":"x","password":"x123456"}'
+# → {"code":10003,"message":"无操作权限（system:user:create）"}
+```
+
+**动态路由的 JSON 实样**（GET /permission/info 返回的 routes 片段——管理端侧边栏就是它渲染的）：
+
+```json
+{ "routes": [
+    { "menu": { "id": 20, "name": "系统管理", "menuType": "M", "path": "/system", "icon": "Setting" },
+      "children": [
+        { "menu": { "id": 21, "name": "用户管理", "menuType": "C",
+                    "path": "/system/user", "component": "system/user/index" },
+          "children": [
+            { "menu": { "id": 211, "name": "用户新增", "menuType": "F",
+                        "permission": "system:user:create" }, "children": [] } ] } ] } ],
+  "permissions": ["system:user:query", "system:user:create", "usage:query"] }
+```
+M 目录 → 侧边栏分组；C 菜单 → 路由页面（component 映射到 views 下同名文件）；
+F 按钮 → 不进路由，只进 permissions 数组控制按钮显隐。
+
 ### 3.3 管理端动态路由
 后端 `/api/platform/system/permission/info` 返回 `{routes: 菜单树, permissions: 权限码}`；
 前端 `api/routes.ts` 把 MenuNode 转成 pure-admin 路由（component 字符串 → 自动映射 `src/views/<component>.vue`），

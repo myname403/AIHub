@@ -1,0 +1,8 @@
+flowchart TB
+  G[用户下达目标] --> P[PlanningAgent<br/>LLM 拆解子任务链]
+  P --> B{三重预算检查<br/>子任务数 / Token / 耗时}
+  B -- 超限 --> S[终止并返回已得结果]
+  B -- 正常 --> E[按名派发执行智能体<br/>Table / Chart / HtmlDoc]
+  E ~~~ R[ReAct 循环<br/>思考 → 行动 → 观察]
+  R --> AR[产物 Artifact 落盘<br/>预览卡片返回]
+  R -- agent.step 事件帧 --> F[前端时间线实时推送<br/>支持随时中断]

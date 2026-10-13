@@ -3,6 +3,8 @@ package com.aihub.ai.infra.ai;
 import com.aihub.ai.domain.model.ChatTurn;
 import com.aihub.ai.domain.model.MessageReference;
 import com.aihub.ai.domain.model.RetrievedChunk;
+import com.aihub.ai.domain.model.SequencedSink;
+import com.aihub.ai.domain.model.StreamBridge;
 import com.aihub.ai.domain.model.StreamEvent;
 import com.aihub.ai.domain.spi.AppRepository;
 import com.aihub.ai.domain.spi.ChatExecutor;
@@ -68,7 +70,7 @@ public class SpringAiChatExecutor implements ChatExecutor {
         long start = System.currentTimeMillis();
         try {
             ChatClient client = chatClientFactory.create(turn.tenantId(), turn.appId(), turn.scene(), turn.modelCode());
-            Augmented augmented = augment(turn, null, new int[]{0});
+            Augmented augmented = augment(turn, null);
             org.springframework.ai.chat.model.ChatResponse response = client.prompt()
                     .user(augmented.prompt())
                     .advisors(a -> a.param(ChatMemory.CONVERSATION_ID,
@@ -113,17 +115,19 @@ public class SpringAiChatExecutor implements ChatExecutor {
     @Override
     public StreamResult stream(ChatTurn turn, StreamSink sink) {
         AiCallContext.set(turn.tenantId(), turn.appId(), turn.scene(), turn.conversationId());
+        // 序号化 sink：本会话所有事件帧（含工具事件）由它统一编号，全局唯一递增
+        SequencedSink seq = SequencedSink.of(sink);
+        // 桥设置给同步链兜底；真正的跨线程通道靠 prompt 级 toolContext（见下）
+        StreamBridge.set(seq);
         ChatClient client = chatClientFactory.create(turn.tenantId(), turn.appId(), turn.scene(), turn.modelCode());
         String memoryKey = DbChatMemory.key(turn.tenantId(), turn.conversationId());
         long start = System.currentTimeMillis();
-        int[] index = {0};
         StringBuilder content = new StringBuilder();
 
-        sink.emit(StreamEvent.of(index[0]++, StreamEvent.MSG_START,
-                Map.of("conversationId", turn.conversationId())));
+        seq.emit(StreamEvent.MSG_START, java.util.Map.of("conversationId", turn.conversationId()));
 
         // RAG：检索 + 注入 + 引用事件（在 msg.start 之后、token 之前发出）
-        Augmented augmented = augment(turn, sink, index);
+        Augmented augmented = augment(turn, seq);
 
         // 流式最后一个 ChatResponse 携带 usage，用作本次调用的 token 统计依据
         final org.springframework.ai.chat.model.ChatResponse[] last = {null};
@@ -134,16 +138,29 @@ public class SpringAiChatExecutor implements ChatExecutor {
                             .param(AuditAdvisor.CTX_TENANT, turn.tenantId())
                             .param(AuditAdvisor.CTX_APP, turn.appId())
                             .param(AuditAdvisor.CTX_SCENE, turn.scene()))
+                    // ★ 工具事件跨线程主通道：.stream() 的工具执行发生在 Reactor 调度线程，
+                    // ThreadLocal 不跨线程——ToolContext 随 prompt 携带桥，与线程无关。
+                    // 没有它，普通对话里模型调用知识检索/时间工具时前端完全无感知。
+                    .toolContext(StreamBridge.toolContextMap())
                     .stream()
                     .chatResponse()
                     .doOnNext(response -> {
                         last[0] = response;
                         if (response != null && response.getResult() != null
                                 && response.getResult().getOutput() != null) {
-                            String token = response.getResult().getOutput().getText();
+                            var output = response.getResult().getOutput();
+                            // 推理模型的“思考”增量：Spring AI 把 reasoning_content 放进 AssistantMessage 的 metadata，
+                            // key 为 reasoningContent（智谱等兼容供应商字段名一致；Ollama 用 reasoning 不会被解析）。
+                            Object reasoning = output.getMetadata() == null
+                                    ? null : output.getMetadata().get("reasoningContent");
+                            if (reasoning != null && !reasoning.toString().isEmpty()) {
+                                seq.emit(StreamEvent.REASONING,
+                                        java.util.Map.of("content", reasoning.toString()));
+                            }
+                            String token = output.getText();
                             if (token != null) {
                                 content.append(token);
-                                sink.emit(StreamEvent.token(index[0]++, token));
+                                seq.emit(StreamEvent.TOKEN, java.util.Map.of("content", token));
                             }
                         }
                     })
@@ -157,19 +174,20 @@ public class SpringAiChatExecutor implements ChatExecutor {
             int tokenIn = tokenOf(last[0], true);
             int tokenOut = tokenOf(last[0], false);
             aiMetrics.recordChat(turn.scene(), true, cost, modelCode, tokenIn, tokenOut);
-            sink.emit(StreamEvent.end(index[0]++, cost, modelCode));
+            seq.emit(StreamEvent.MSG_END, java.util.Map.of("costMs", cost, "model", modelCode));
             return new StreamResult(content.toString(), modelCode, cost, tokenIn, tokenOut);
         } catch (Exception e) {
             log.error("流式对话失败 tenant={} conv={}", turn.tenantId(), turn.conversationId(), e);
             aiMetrics.recordChat(turn.scene(), false, System.currentTimeMillis() - start,
                     chatClientFactory.resolvedModelCode(turn.tenantId(), turn.appId(), turn.scene(), turn.modelCode()),
                     0, 0);
-            sink.emit(StreamEvent.error(index[0]++,
-                    String.valueOf(com.aihub.common.result.ResultCode.MODEL_UNAVAILABLE.getCode()),
-                    "模型调用失败，请稍后重试"));
+            seq.emit(StreamEvent.ERROR,
+                    java.util.Map.of("code", String.valueOf(com.aihub.common.result.ResultCode.MODEL_UNAVAILABLE.getCode()),
+                            "message", "模型调用失败，请稍后重试"));
             throw e;
         } finally {
             AiCallContext.clear();
+            StreamBridge.clear();
             sink.close();
         }
     }
@@ -178,7 +196,7 @@ public class SpringAiChatExecutor implements ChatExecutor {
      * RAG 增强：检索知识库 → 拼装受限上下文 → 发出 rag.sources 事件。
      * 未绑定知识库或未命中时返回原始问题、引用列表为空。
      */
-    private Augmented augment(ChatTurn turn, StreamSink sink, int[] index) {
+    private Augmented augment(ChatTurn turn, SequencedSink seq) {
         try {
             List<Long> kbIds = appRepository.knowledgeBaseIds(turn.tenantId(), turn.appId());
             if (kbIds == null || kbIds.isEmpty()) {
@@ -206,8 +224,8 @@ public class SpringAiChatExecutor implements ChatExecutor {
             if (sources.isEmpty()) {
                 return Augmented.plain(turn.userText());
             }
-            if (sink != null) {
-                sink.emit(StreamEvent.of(index[0]++, StreamEvent.RAG_SOURCES, Map.of("sources", sources)));
+            if (seq != null) {
+                seq.emit(StreamEvent.RAG_SOURCES, Map.of("sources", sources));
             }
             // 防幻觉约束（源自课程天机助手提示词）：只依据知识库内容作答
             return new Augmented("请仅依据下方知识库内容回答用户问题；"

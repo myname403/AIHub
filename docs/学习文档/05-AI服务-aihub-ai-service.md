@@ -65,6 +65,45 @@ infra/          基础设施层：
 ```
 模型自己"决定"何时调工具——这就是 Agent 能自主操作的基础。
 
+**最小 demo——两行代码体验 Spring AI 对话**（对照 SpringAiChatExecutor 的简化版）：
+
+```java
+// ① 建模型实例（指向本地 Ollama 或任何 OpenAI 兼容接口）
+OpenAiApi api = OpenAiApi.builder()
+        .baseUrl("http://localhost:11434")      // Ollama
+        .apiKey("ollama")                        // Ollama 不验但字段必填
+        .build();
+ChatModel model = new OpenAiChatModel(api, OpenAiChatOptions.builder()
+        .model("qwen3.5:0.8b").build());
+
+// ② 对话——就这一个调用
+String answer = ChatClient.builder(model).build()
+        .prompt().user("用一句话介绍自己").call().content();
+System.out.println(answer);   // → "我是AIHub智能助手……"
+
+// ③ 流式版：把 .call() 换成 .stream()，每个 token 陆续到达
+ChatClient.builder(model).build().prompt().user("讲个笑话")
+    .stream().content()                        // Flux<String>：token 事件流
+    .doOnNext(token -> System.out.print(token)) // 每 token 到达就打印 → 打字机
+    .blockLast();                              // 等流结束
+```
+
+**流式事件帧实际样例**（curl 直连 SSE 接口的真实输出，本项目可复现）：
+
+```
+event:msg.start
+data:{"index":0,"event":"msg.start","data":{"conversationId":"6f278b77"}}
+
+event:token
+data:{"index":1,"event":"token","data":{"content":"你"}}
+
+event:token
+data:{"index":2,"event":"token","data":{"content":"好"}}
+
+event:msg.end
+data:{"index":9,"event":"msg.end","data":{"costMs":5655,"model":"qwen3.5:0.8b"}}
+```
+
 ---
 
 ## 4. 一次对话的完整链路（核心中的核心）
@@ -170,6 +209,24 @@ SpringAiChatExecutor.stream（infra 层）
 - `browser/`：ChromeLauncher 启动本机 Chrome → WebSocketCdpTransport 走 CDP 协议（Chrome DevTools Protocol）→ PageAnnotator 给页面元素编号让模型能"看到"并操作；
 - `storage/`：`StorageConfiguration` 按配置选 Local 或 MinIO 实现（条件装配）；
 - `metrics/`：Micrometer 计数器/计时器 → /actuator/prometheus → Prometheus + Grafana。
+
+### 5.7 本地模型混跑与工程化保障（本期新增，实测踩坑全套）
+
+运行环境已实现**云端与本地模型混合部署**：小米 MiMo / 智谱 GLM 云端主链路 + 本地 Ollama Qwen3 备份。四个工程决策与背后的坑：
+
+**① 推理模型的 content 为空问题**。Qwen3/3.5 这类推理模型把回答输出在 `reasoning` 字段、`content` 恒为空，Spring AI 读不到内容（前端表现为永远"思考中"）。Ollama 的 OpenAI 兼容端点会**忽略** `think:false` 参数（实测），可靠解法是 Qwen3 官方的 `/no_think` 软开关——ChatClientFactory 对 Ollama 供应商自动在系统提示词追加，云供应商不受影响。
+
+**② 嵌入模型显式配置**。RAG 检索前要把问题向量化；不配置时 Spring AI 默认连 api.openai.com——网络不通会**无限阻塞**（绑定了知识库的应用全部卡死）。VectorStoreConfig 显式指向本地 Ollama 嵌入模型（`aihub.embedding.*` 配置，embeddinggemma 768 维）。**换嵌入模型必须删旧向量索引**（FT.DROPINDEX，应用启动按新维度自动重建），否则维度不匹配报错。
+
+**③ RAG 检索超时保护**。检索包 `CompletableFuture.get(3, SECONDS)`——超时/失败一律降级为普通对话。原则：**可选能力（RAG）绝不能拖死主链路（对话）**。
+
+**④ 模型切换的两层治理**。`ChatTurn.modelCode`（前端模型选择器传入，可空）→ ChatClientFactory.create(tenant, app, scene, modelCode)：指定时**绕过场景路由**直接按编码解析端点；缓存 key 编入 modelCode（`tenant:app:scene:modelCode`），不同模型的 Client 互不污染。空值走管理端配置的 ai_model_route——"管理员配默认、用户按需切换"。
+
+**⑤ 系统提示词的工具约束**。给小模型挂工具后，提示词措辞会强烈影响调用行为——曾因提示词里写了工作目录说明，小模型对"42+42"也去调文件工具并循环报错。约束要双向写明："普通问题直接回答不要调工具；仅当用户要求操作文件时才使用"。
+
+**⑥ MVC 异步超时**。流式回答走 StreamingResponseBody（异步请求），容器/手配的异步超时会在长回答中途掐断连接（实测 119 秒的回答被 120 秒硬编码截断，前端报"模型调用失败"）。WebMvcConfig.configureAsyncSupport 放宽到 5 分钟。
+
+**⑦ MCP 本地接入（stdio）**。三个开源 MCP Server 以子进程方式托管（filesystem 限定工作目录 / sequential-thinking / web-fetch），yml 配置即插即用。Windows 三条经验：不要用 cmd/npx 包装（握手超时，直接 node.exe 跑入口 js）；包统一装固定目录且**必须写入 package.json**（--no-save 会裁掉旧包）；MCP 协议版本要匹配（Java SDK 0.17 只认 2024-11-05，mokei 版 2025-11-25 被拒、换 kazuph 版通过）。
 
 ---
 

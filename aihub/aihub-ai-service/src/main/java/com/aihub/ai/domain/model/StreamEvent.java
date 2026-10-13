@@ -24,10 +24,35 @@ public record StreamEvent(int index, String event, long ts, Map<String, Object> 
     /* 事件类型常量（与 03 号文档 7.1 节一致） */
     public static final String MSG_START = "msg.start";
     public static final String TOKEN = "token";
+    /** 推理模型的“思考过程”增量（来自 reasoning_content），与正式回答 token 分开下发 */
+    public static final String REASONING = "reasoning";
+    /**
+     * 工具调用开始/结束（对齐 ChatGPT / Coze 的工具调用卡片）。
+     *
+     * <p>为什么由 {@code AuditedToolCallback} 发：它是所有工具（内置 + MCP）的统一包装层，
+     * 在这一层广播事件，工具实现类无需感知"自己在被谁调用、前端要不要看"——
+     * 与审计落库同源同层，一次工具执行同时产生审计记录与前端事件。
+     *
+     * <p>data 约定：
+     * <pre>
+     *   tool.start: { name, source(local/mcp), input(入参摘要) }
+     *   tool.end:   { name, source, success, costMs, output(出参/错误摘要) }
+     * </pre>
+     * 事件怎么从 ChatClient 内部送到 sink：见 {@link SequencedSink} 与
+     * {@link StreamBridge}（ToolContext 跨线程传递 + ThreadLocal 同步链兜底）。
+     */
     public static final String TOOL_START = "tool.start";
     public static final String TOOL_END = "tool.end";
     public static final String RAG_SOURCES = "rag.sources";
     public static final String AGENT_STEP = "agent.step";
+    /**
+     * 任务计划（对齐 Manus 的计划清单）：PlanningAgent 拆解完成后发一次，
+     * data = { tasks: [{agent, task}] }；随后每个子任务完成发一条
+     * {@link #AGENT_TASK_DONE}（data = { index, agent, task, costMs, status }），
+     * 前端据此渲染可勾选的计划清单——用户在长任务里能随时看到"拆了几步、完成到哪"。
+     */
+    public static final String AGENT_PLAN = "agent.plan";
+    public static final String AGENT_TASK_DONE = "agent.task.done";
     public static final String ARTIFACT = "artifact";
     public static final String MSG_END = "msg.end";
     public static final String ERROR = "error";
@@ -39,6 +64,10 @@ public record StreamEvent(int index, String event, long ts, Map<String, Object> 
 
     public static StreamEvent token(int index, String content) {
         return of(index, TOKEN, Map.of("content", content == null ? "" : content));
+    }
+
+    public static StreamEvent reasoning(int index, String content) {
+        return of(index, REASONING, Map.of("content", content == null ? "" : content));
     }
 
     public static StreamEvent error(int index, String code, String message) {

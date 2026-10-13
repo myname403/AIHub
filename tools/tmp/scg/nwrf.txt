@@ -1,0 +1,220 @@
+Compiled from "NettyWriteResponseFilter.java"
+public class org.springframework.cloud.gateway.filter.NettyWriteResponseFilter implements org.springframework.cloud.gateway.filter.GlobalFilter,org.springframework.core.Ordered {
+  public static final int WRITE_RESPONSE_FILTER_ORDER;
+
+  private static final org.apache.commons.logging.Log log;
+
+  private final java.util.List<org.springframework.http.MediaType> streamingMediaTypes;
+
+  public org.springframework.cloud.gateway.filter.NettyWriteResponseFilter(java.util.List<org.springframework.http.MediaType>);
+    Code:
+       0: aload_0
+       1: invokespecial #1                  // Method java/lang/Object."<init>":()V
+       4: aload_0
+       5: aload_1
+       6: putfield      #7                  // Field streamingMediaTypes:Ljava/util/List;
+       9: return
+
+  public int getOrder();
+    Code:
+       0: iconst_m1
+       1: ireturn
+
+  public reactor.core.publisher.Mono<java.lang.Void> filter(org.springframework.web.server.ServerWebExchange, org.springframework.cloud.gateway.filter.GatewayFilterChain);
+    Code:
+       0: aload_2
+       1: aload_1
+       2: invokeinterface #13,  2           // InterfaceMethod org/springframework/cloud/gateway/filter/GatewayFilterChain.filter:(Lorg/springframework/web/server/ServerWebExchange;)Lreactor/core/publisher/Mono;
+       7: aload_0
+       8: aload_1
+       9: invokedynamic #19,  0             // InvokeDynamic #0:get:(Lorg/springframework/cloud/gateway/filter/NettyWriteResponseFilter;Lorg/springframework/web/server/ServerWebExchange;)Ljava/util/function/Supplier;
+      14: invokestatic  #23                 // Method reactor/core/publisher/Mono.defer:(Ljava/util/function/Supplier;)Lreactor/core/publisher/Mono;
+      17: invokevirtual #29                 // Method reactor/core/publisher/Mono.then:(Lreactor/core/publisher/Mono;)Lreactor/core/publisher/Mono;
+      20: aload_0
+      21: aload_1
+      22: invokedynamic #33,  0             // InvokeDynamic #1:accept:(Lorg/springframework/cloud/gateway/filter/NettyWriteResponseFilter;Lorg/springframework/web/server/ServerWebExchange;)Ljava/util/function/Consumer;
+      27: invokevirtual #37                 // Method reactor/core/publisher/Mono.doFinally:(Ljava/util/function/Consumer;)Lreactor/core/publisher/Mono;
+      30: areturn
+
+  protected org.springframework.core.io.buffer.DataBuffer wrap(io.netty.buffer.ByteBuf, org.springframework.http.server.reactive.ServerHttpResponse);
+    Code:
+       0: aload_2
+       1: invokeinterface #41,  1           // InterfaceMethod org/springframework/http/server/reactive/ServerHttpResponse.bufferFactory:()Lorg/springframework/core/io/buffer/DataBufferFactory;
+       6: astore_3
+       7: aload_3
+       8: instanceof    #47                 // class org/springframework/core/io/buffer/NettyDataBufferFactory
+      11: ifeq          27
+      14: aload_3
+      15: checkcast     #47                 // class org/springframework/core/io/buffer/NettyDataBufferFactory
+      18: astore        4
+      20: aload         4
+      22: aload_1
+      23: invokevirtual #49                 // Method org/springframework/core/io/buffer/NettyDataBufferFactory.wrap:(Lio/netty/buffer/ByteBuf;)Lorg/springframework/core/io/buffer/NettyDataBuffer;
+      26: areturn
+      27: aload_3
+      28: instanceof    #53                 // class org/springframework/core/io/buffer/DefaultDataBufferFactory
+      31: ifeq          74
+      34: aload_3
+      35: checkcast     #53                 // class org/springframework/core/io/buffer/DefaultDataBufferFactory
+      38: aload_1
+      39: invokevirtual #55                 // Method io/netty/buffer/ByteBuf.readableBytes:()I
+      42: invokevirtual #61                 // Method org/springframework/core/io/buffer/DefaultDataBufferFactory.allocateBuffer:(I)Lorg/springframework/core/io/buffer/DefaultDataBuffer;
+      45: astore        4
+      47: aload         4
+      49: iconst_1
+      50: anewarray     #65                 // class java/nio/ByteBuffer
+      53: dup
+      54: iconst_0
+      55: aload_1
+      56: invokevirtual #67                 // Method io/netty/buffer/ByteBuf.nioBuffer:()Ljava/nio/ByteBuffer;
+      59: aastore
+      60: invokeinterface #71,  2           // InterfaceMethod org/springframework/core/io/buffer/DataBuffer.write:([Ljava/nio/ByteBuffer;)Lorg/springframework/core/io/buffer/DataBuffer;
+      65: pop
+      66: aload_1
+      67: invokevirtual #77                 // Method io/netty/buffer/ByteBuf.release:()Z
+      70: pop
+      71: aload         4
+      73: areturn
+      74: new           #81                 // class java/lang/IllegalArgumentException
+      77: dup
+      78: aload_3
+      79: invokevirtual #83                 // Method java/lang/Object.getClass:()Ljava/lang/Class;
+      82: invokedynamic #87,  0             // InvokeDynamic #2:makeConcatWithConstants:(Ljava/lang/Class;)Ljava/lang/String;
+      87: invokespecial #91                 // Method java/lang/IllegalArgumentException."<init>":(Ljava/lang/String;)V
+      90: athrow
+
+  private void cleanup(org.springframework.web.server.ServerWebExchange);
+    Code:
+       0: aload_1
+       1: getstatic     #94                 // Field org/springframework/cloud/gateway/support/ServerWebExchangeUtils.CLIENT_RESPONSE_CONN_ATTR:Ljava/lang/String;
+       4: invokeinterface #100,  2          // InterfaceMethod org/springframework/web/server/ServerWebExchange.getAttribute:(Ljava/lang/String;)Ljava/lang/Object;
+       9: checkcast     #106                // class reactor/netty/Connection
+      12: astore_2
+      13: aload_2
+      14: ifnull        23
+      17: aload_2
+      18: invokeinterface #108,  1          // InterfaceMethod reactor/netty/Connection.dispose:()V
+      23: return
+
+  private boolean isStreamingMediaType(org.springframework.http.MediaType);
+    Code:
+       0: aload_1
+       1: ifnull        47
+       4: iconst_0
+       5: istore_2
+       6: iload_2
+       7: aload_0
+       8: getfield      #7                  // Field streamingMediaTypes:Ljava/util/List;
+      11: invokeinterface #111,  1          // InterfaceMethod java/util/List.size:()I
+      16: if_icmpge     47
+      19: aload_0
+      20: getfield      #7                  // Field streamingMediaTypes:Ljava/util/List;
+      23: iload_2
+      24: invokeinterface #116,  2          // InterfaceMethod java/util/List.get:(I)Ljava/lang/Object;
+      29: checkcast     #119                // class org/springframework/http/MediaType
+      32: aload_1
+      33: invokevirtual #121                // Method org/springframework/http/MediaType.isCompatibleWith:(Lorg/springframework/http/MediaType;)Z
+      36: ifeq          41
+      39: iconst_1
+      40: ireturn
+      41: iinc          2, 1
+      44: goto          6
+      47: iconst_0
+      48: ireturn
+
+  private void lambda$filter$2(org.springframework.web.server.ServerWebExchange, reactor.core.publisher.SignalType);
+    Code:
+       0: aload_2
+       1: getstatic     #125                // Field reactor/core/publisher/SignalType.CANCEL:Lreactor/core/publisher/SignalType;
+       4: if_acmpeq     14
+       7: aload_2
+       8: getstatic     #131                // Field reactor/core/publisher/SignalType.ON_ERROR:Lreactor/core/publisher/SignalType;
+      11: if_acmpne     19
+      14: aload_0
+      15: aload_1
+      16: invokevirtual #134                // Method cleanup:(Lorg/springframework/web/server/ServerWebExchange;)V
+      19: return
+
+  private reactor.core.publisher.Mono lambda$filter$1(org.springframework.web.server.ServerWebExchange);
+    Code:
+       0: aload_1
+       1: getstatic     #94                 // Field org/springframework/cloud/gateway/support/ServerWebExchangeUtils.CLIENT_RESPONSE_CONN_ATTR:Ljava/lang/String;
+       4: invokeinterface #100,  2          // InterfaceMethod org/springframework/web/server/ServerWebExchange.getAttribute:(Ljava/lang/String;)Ljava/lang/Object;
+       9: checkcast     #106                // class reactor/netty/Connection
+      12: astore_2
+      13: aload_2
+      14: ifnonnull     21
+      17: invokestatic  #138                // Method reactor/core/publisher/Mono.empty:()Lreactor/core/publisher/Mono;
+      20: areturn
+      21: getstatic     #142                // Field log:Lorg/apache/commons/logging/Log;
+      24: invokeinterface #146,  1          // InterfaceMethod org/apache/commons/logging/Log.isTraceEnabled:()Z
+      29: ifeq          67
+      32: getstatic     #142                // Field log:Lorg/apache/commons/logging/Log;
+      35: aload_2
+      36: invokeinterface #151,  1          // InterfaceMethod reactor/netty/Connection.channel:()Lio/netty/channel/Channel;
+      41: invokeinterface #155,  1          // InterfaceMethod io/netty/channel/Channel.id:()Lio/netty/channel/ChannelId;
+      46: invokeinterface #161,  1          // InterfaceMethod io/netty/channel/ChannelId.asShortText:()Ljava/lang/String;
+      51: aload_1
+      52: invokeinterface #167,  1          // InterfaceMethod org/springframework/web/server/ServerWebExchange.getLogPrefix:()Ljava/lang/String;
+      57: invokedynamic #170,  0            // InvokeDynamic #3:makeConcatWithConstants:(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;
+      62: invokeinterface #173,  2          // InterfaceMethod org/apache/commons/logging/Log.trace:(Ljava/lang/Object;)V
+      67: aload_1
+      68: invokeinterface #177,  1          // InterfaceMethod org/springframework/web/server/ServerWebExchange.getResponse:()Lorg/springframework/http/server/reactive/ServerHttpResponse;
+      73: astore_3
+      74: aload_2
+      75: invokeinterface #181,  1          // InterfaceMethod reactor/netty/Connection.inbound:()Lreactor/netty/NettyInbound;
+      80: invokeinterface #185,  1          // InterfaceMethod reactor/netty/NettyInbound.receive:()Lreactor/netty/ByteBufFlux;
+      85: invokevirtual #191                // Method reactor/netty/ByteBufFlux.retain:()Lreactor/netty/ByteBufFlux;
+      88: aload_0
+      89: aload_3
+      90: invokedynamic #196,  0            // InvokeDynamic #4:apply:(Lorg/springframework/cloud/gateway/filter/NettyWriteResponseFilter;Lorg/springframework/http/server/reactive/ServerHttpResponse;)Ljava/util/function/Function;
+      95: invokevirtual #200                // Method reactor/netty/ByteBufFlux.map:(Ljava/util/function/Function;)Lreactor/core/publisher/Flux;
+      98: astore        4
+     100: aconst_null
+     101: astore        5
+     103: aload_3
+     104: invokeinterface #204,  1          // InterfaceMethod org/springframework/http/server/reactive/ServerHttpResponse.getHeaders:()Lorg/springframework/http/HttpHeaders;
+     109: invokevirtual #208                // Method org/springframework/http/HttpHeaders.getContentType:()Lorg/springframework/http/MediaType;
+     112: astore        5
+     114: goto          142
+     117: astore        6
+     119: getstatic     #142                // Field log:Lorg/apache/commons/logging/Log;
+     122: invokeinterface #146,  1          // InterfaceMethod org/apache/commons/logging/Log.isTraceEnabled:()Z
+     127: ifeq          142
+     130: getstatic     #142                // Field log:Lorg/apache/commons/logging/Log;
+     133: ldc           #216                // String invalid media type
+     135: aload         6
+     137: invokeinterface #218,  3          // InterfaceMethod org/apache/commons/logging/Log.trace:(Ljava/lang/Object;Ljava/lang/Throwable;)V
+     142: aload_0
+     143: aload         5
+     145: invokevirtual #221                // Method isStreamingMediaType:(Lorg/springframework/http/MediaType;)Z
+     148: ifeq          170
+     151: aload_3
+     152: aload         4
+     154: invokedynamic #224,  0            // InvokeDynamic #5:apply:()Ljava/util/function/Function;
+     159: invokevirtual #227                // Method reactor/core/publisher/Flux.map:(Ljava/util/function/Function;)Lreactor/core/publisher/Flux;
+     162: invokeinterface #230,  2          // InterfaceMethod org/springframework/http/server/reactive/ServerHttpResponse.writeAndFlushWith:(Lorg/reactivestreams/Publisher;)Lreactor/core/publisher/Mono;
+     167: goto          178
+     170: aload_3
+     171: aload         4
+     173: invokeinterface #234,  2          // InterfaceMethod org/springframework/http/server/reactive/ServerHttpResponse.writeWith:(Lorg/reactivestreams/Publisher;)Lreactor/core/publisher/Mono;
+     178: areturn
+    Exception table:
+       from    to  target type
+         103   114   117   Class java/lang/Exception
+
+  private org.springframework.core.io.buffer.DataBuffer lambda$filter$0(org.springframework.http.server.reactive.ServerHttpResponse, io.netty.buffer.ByteBuf);
+    Code:
+       0: aload_0
+       1: aload_2
+       2: aload_1
+       3: invokevirtual #237                // Method wrap:(Lio/netty/buffer/ByteBuf;Lorg/springframework/http/server/reactive/ServerHttpResponse;)Lorg/springframework/core/io/buffer/DataBuffer;
+       6: areturn
+
+  static {};
+    Code:
+       0: ldc           #8                  // class org/springframework/cloud/gateway/filter/NettyWriteResponseFilter
+       2: invokestatic  #240                // Method org/apache/commons/logging/LogFactory.getLog:(Ljava/lang/Class;)Lorg/apache/commons/logging/Log;
+       5: putstatic     #142                // Field log:Lorg/apache/commons/logging/Log;
+       8: return
+}

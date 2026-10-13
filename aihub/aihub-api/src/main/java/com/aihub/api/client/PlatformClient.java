@@ -42,6 +42,21 @@ import java.util.List;
 public interface PlatformClient {
 
     /** 校验租户是否有效（含租户状态）。GET /internal/tenants/check?tenantId=1001 */
+    // ──────────────────────────────────────────────────────────────────────────
+    // 这里没有实现类，不是写漏了——这是 Feign 接口，实现由框架在运行时动态生成。
+    //
+    // 调用链：AI服务注入 PlatformClient → Feign 生成代理 → 发 HTTP →
+    //        platform-service 的 Controller 处理 → 返回 JSON → Feign 反序列化 → R<T>
+    //
+    // 对应的 Controller 在另一个模块：
+    //   aihub-platform-service/src/main/java/.../controller/InternalController.java
+    //   里面用 @RestController 实现 /internal/tenants/check 等真实 HTTP 端点。
+    //
+    // 本文件（aihub-api 模块）只负责「契约」：定义方法签名 + 路径 + 参数 + DTO，
+    // 让调用方和提供方共享同一份接口定义，编译期保证两端一致。
+    // ──────────────────────────────────────────────────────────────────────────
+
+    /** 校验租户是否有效（含租户状态）。对应 Controller: GET /internal/tenants/check */
     @GetMapping("/tenants/check")
     R<TenantBrief> checkTenant(@RequestParam("tenantId") Long tenantId);
 
