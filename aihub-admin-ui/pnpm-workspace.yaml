@@ -1,0 +1,30 @@
+# pnpm 10+ 的配置新家。
+#
+# 【背景】模板把配置写在 `.npmrc` 与 `package.json` 的 `pnpm` 字段里，
+# 但 pnpm 10 起这些位置**不再被读取**（工具会警告
+# "The 'pnpm' field in package.json is no longer read by pnpm"），
+# 于是本项目在 pnpm 12 下出现了一连串构建问题，全部收敛到本文件解决。
+#
+# 1) shamefullyHoist：原 `.npmrc` 里的 `shamefully-hoist=true` 已失效。
+#    后果：node_modules 退化成**严格布局**（只有直接依赖可解析），
+#    而模板源码/配置里存在多个「幽灵依赖」（未声明却直接引用），于是：
+#      - main.ts 直接 import `tippy.js/dist/tippy.css`（tippy.js 此前只是 vue-tippy 的传递依赖）
+#      - stylelint.config.js extends `stylelint-config-standard` / `stylelint-config-html`
+#        （二者均未声明为直接依赖，只作为其它 preset 的传递依赖存在）
+#      - 同文件 plugins 里还引用了 `stylelint-scss` / `stylelint-order`
+#    严格布局下这些一律 "Could not find / failed to resolve"，pre-commit 与构建双双失败。
+#    npm/yarn 默认把依赖提升到根目录，所以模板作者从未遇到这个问题。
+#    显式开启以保持与原 `.npmrc` 一致的扁平布局。
+# 2) allowBuilds：pnpm 默认拒绝执行依赖的安装脚本；未批准时 vue-demi 等包文件不完整，
+#    构建会报 "modules: vue-demi package.json file does not exist"。
+#    下面显式批准三个构建链必需的工具（来源可信）。
+#
+# 说明：`shamefullyHoist` 只是把布局还原成 npm 风格，**不能**替代"把幽灵依赖声明出来"。
+# 要彻底规范化，应把上述包补进 devDependencies，再关掉本开关验证构建仍能通过。
+
+shamefullyHoist: true
+
+allowBuilds:
+  '@parcel/watcher': true
+  esbuild: true
+  vue-demi: true

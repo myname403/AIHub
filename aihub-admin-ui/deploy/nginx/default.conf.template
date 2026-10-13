@@ -1,0 +1,53 @@
+# AIHub 管理后台 · Nginx 配置（envsubst 模板）
+#
+# 为什么需要这个文件：前端是纯静态产物 + 直接调后端接口。
+# 开发期靠 Vite 的 proxy 把 /auth、/api 转发到 8080；**生产容器里没有代理就会 404**
+# ——页面能打开，但所有接口都失败（旧版 Dockerfile 只 COPY 了 dist，就踩了这个坑）。
+#
+# 用法：官方 nginx 镜像启动时会自动对 /etc/nginx/templates/*.template 执行 envsubst，
+# 只替换"环境变量里真实存在"的名字，因此 nginx 自身的 $host/$uri 等运行时变量不受影响。
+# 后端地址由 BACKEND_URL 决定（默认 http://host.docker.internal:8080，即宿主机上的网关）。
+server {
+    listen       80;
+    server_name  _;
+
+    root  /usr/share/nginx/html;
+    index index.html;
+
+    # 静态资源压缩（流式接口不经过 Nginx，不受影响）
+    gzip              on;
+    gzip_min_length   1k;
+    gzip_comp_level   5;
+    gzip_types        text/plain text/css application/javascript application/json image/svg+xml;
+
+    # 前端用 hash 路由（/#/xxx），刷新任意路径都应回到 index.html
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # 登录 / 刷新令牌
+    location /auth/ {
+        proxy_pass ${BACKEND_URL};
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # 业务接口：统一走网关（鉴权、限流、租户注入都在网关完成）
+    location /api/ {
+        proxy_pass ${BACKEND_URL};
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # 知识库检索调试等接口耗时较长，放宽读超时（默认 60s）
+        proxy_read_timeout 120s;
+    }
+
+    # 带 hash 的静态资源可长期缓存
+    location /static/ {
+        expires    30d;
+        add_header Cache-Control "public, max-age=2592000";
+    }
+}
